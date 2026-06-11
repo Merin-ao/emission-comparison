@@ -1,0 +1,6 @@
+id: emissions
+name: Emissions Analytics
+summary: >-
+  Vessel emissions and regulatory compliance — EU ETS exposure, FuelEU
+  compliance balance and penalty, and CII ratings — sourced from ZeroNorth's
+  emission-analytics API.
