@@ -1,0 +1,4 @@
+[submodule "zap-widgets"]
+	path = zap-widgets
+	url = https://github.com/0north/zap-widgets.git
+	branch = feat/vessel-tinder
