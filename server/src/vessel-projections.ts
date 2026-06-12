@@ -19,7 +19,7 @@ import type { EmissionAnalyticsInput } from "../../zap-widgets/src/emission/sche
 // the same single-source-of-truth contract the other projections rely on. The
 // catalog `ghostedData` schema isn't exported as a named type, so we read it off
 // the widget definition instead.
-import { ghosted } from "../../zap-widgets/src/vessel-match/schema/index.ts";
+import { ghosted, crossing, nearby } from "../../zap-widgets/src/vessel-match/schema/index.ts";
 import type {
   VesselBiodataData,
   VesselFlipCardData,
@@ -865,6 +865,94 @@ const projectGhosted = (rows: GhostRow[]): VesselGhostedData => {
   };
 };
 
+// ---------- vessel_crossing (side-by-side compare) ----------
+
+type CrossingData = z.infer<typeof crossing.input>;
+
+/** Project several vessels' facts into the crossing compare card. The FIRST
+ *  vessel is the reference (the widget scores the rest against it), so the caller
+ *  must pass the reference IMO first. Up to 4; real fields only (signal/route are
+ *  derived/omitted — the widget colours by CII). */
+const projectCrossing = (facts: VesselFacts[]): CrossingData => ({
+  vessels: facts.slice(0, 4).map((f) => {
+    const g = grade(f.ciiRating);
+    const age = ageOf(f);
+    return {
+      name: f.vesselName ?? `IMO ${f.imo}`,
+      imo: String(f.imo),
+      ...(f.type ? { type: f.type } : {}),
+      ...(f.dwt != null ? { dwt: f.dwt } : {}),
+      ...(age != null ? { age } : {}),
+      ...(g ? { cii: g } : {}),
+      ...(f.mainFuel ? { fuel: f.mainFuel } : {}),
+    };
+  }),
+});
+
+// ---------- vessel_nearby (radar scope) ----------
+
+type NearbyData = z.infer<typeof nearby.input>;
+
+/** One vessel's plot row for the radar: facts (cii/type) + a live AIS-ish position
+ *  from the data-lake noon report. Vessels with no position are dropped upstream. */
+type NearbyRow = { name: string; lat: number; lon: number; cii: string | null; type: string | null };
+
+/** Project radar rows into the `vessel_nearby` widget shape. `reference` is the
+ *  centre vessel's name; only vessels with a real lat/lon reach here. */
+const projectNearby = (referenceName: string, rows: NearbyRow[]): NearbyData => ({
+  reference: referenceName,
+  vessels: rows.map((r) => {
+    const g = grade(r.cii);
+    return {
+      name: r.name,
+      lat: r.lat,
+      lon: r.lon,
+      ...(g ? { cii: g } : {}),
+      ...(r.type ? { type: r.type } : {}),
+    };
+  }),
+});
+
+// ---------- vessel_awards (LLM-judged hall of fame) ----------
+
+/** Compact real figures per vessel for the awards widget. Like the dowry tool,
+ *  returns NO award copy: the agent ranks the fleet, invents the award titles and
+ *  citations, and composes the `vessel_awards` payload from these figures (see
+ *  zap/knowledge/emissions.md). */
+type AwardsFacts = {
+  year: number;
+  vessels: {
+    imo: number;
+    name: string;
+    cii: "A" | "B" | "C" | "D" | "E" | null;
+    etsCostEur: number | null;
+    fuelEuBalanceT: number | null;
+    fuelEuPenaltyEur: number | null;
+    co2eqT: number | null;
+    mainFuel: string | null;
+    type: string | null;
+    dwt: number | null;
+    dataSource: "live" | "fixture";
+  }[];
+};
+
+const projectAwards = (facts: VesselFacts[]): AwardsFacts => ({
+  year: facts[0]?.year ?? 2026,
+  vessels: facts.map((f) => ({
+    imo: f.imo,
+    name: f.vesselName ?? `IMO ${f.imo}`,
+    cii: grade(f.ciiRating),
+    etsCostEur: f.etsCost != null ? Math.round(f.etsCost) : null,
+    fuelEuBalanceT: f.fuelEuBalance != null ? Math.round(f.fuelEuBalance) : null,
+    fuelEuPenaltyEur: f.fuelEuPenalty != null ? Math.round(f.fuelEuPenalty) : null,
+    co2eqT: f.co2eq != null ? Math.round(f.co2eq) : null,
+    mainFuel: f.mainFuel,
+    type: f.type,
+    dwt: f.dwt,
+    dataSource: f.dataSource,
+  })),
+});
+
 export {
   projectEmissions,
   projectBiodata,
@@ -879,5 +967,17 @@ export {
   projectTinderVoyage,
   projectDowry,
   projectGhosted,
+  projectCrossing,
+  projectNearby,
+  projectAwards,
 };
-export type { DowryFacts, DowryVesselFacts, DowryBand, DivorceDocSources, GhostRow, VesselGhostedData };
+export type {
+  DowryFacts,
+  DowryVesselFacts,
+  DowryBand,
+  DivorceDocSources,
+  GhostRow,
+  VesselGhostedData,
+  NearbyRow,
+  AwardsFacts,
+};

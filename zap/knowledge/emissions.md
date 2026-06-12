@@ -181,3 +181,53 @@ already in the widget's shape.
   vessel with no report on file renders as the most severe "data gap" row. Always 200;
   rows with no live report fall back to demo fixture data (called out in the `footnote`) —
   say "demo data" then.
+
+## Match vs compare — route by how many vessels are named (READ FIRST)
+
+Count the vessels the user names. The verb ("match", "compare", "find") does NOT
+decide — the count does:
+
+- **ONE vessel named** (e.g. "find a match for ADVANTAGE LOVE", "matches for X",
+  "compare X with other/similar vessels") → use the **traffic-signal swipe deck**
+  (`emissions_get_vessel_traffic_signal`), NOT crossing. Set `anchorName` to that
+  vessel's name (it becomes the deck's reference header — it does not need its own
+  IMO). Pass candidate fleet IMOs as `imos`. Do **not** fabricate a comparison of
+  two unrelated vessels.
+- **TWO OR MORE vessels named** (e.g. "compare X and Y", "X vs Y") → use
+  **crossing** (`emissions_get_vessel_crossing`), with the user's primary/named
+  vessel's IMO FIRST in `imos`.
+
+Never substitute an arbitrary vessel as the reference. If you can't resolve the
+named vessel's IMO from `vessel_get_fleet_vessels`, say so — do not anchor on a
+different vessel.
+
+## Compare, awards & radar (crossing / awards / nearby)
+
+Three more widgets, all fed from real fleet data. Get IMOs from
+`vessel_get_fleet_vessels`; never guess one.
+
+- **`emissions_get_vessel_crossing`** (`imos` = comma-separated, the **reference
+  IMO FIRST**, optional aligned `names`) → side-by-side comparison of up to 4
+  vessels, each scored against the first. Use when the user names **two or more
+  specific vessels to compare** ("compare X and Y", "X vs Y"). The first vessel is
+  the reference, so order `imos` with the user's primary vessel first. Pass the
+  result **straight** to `show_vessel_crossing`. (For a single vessel + "find
+  matches", use the traffic-signal swipe deck instead.)
+
+- **`emissions_get_vessel_awards`** (`imos`, optional `names`) → returns compact
+  **real figures** per vessel (CII, EU ETS cost, FuelEU balance/penalty, CO₂eq,
+  fuel, type, DWT). It does **not** assign awards — **you** do: rank the vessels,
+  invent fitting award titles with an emoji, write a one-line `citation` for each
+  grounded in those figures, split them into `group: "good"` (strengths) and
+  `group: "watch"` (risks), set `winner`/`signal`, then compose the
+  `show_vessel_awards` payload yourself. Use for "give out the fleet awards",
+  "hall of fame", "rank the fleet", "best & worst (and why)". Never fabricate the
+  numbers — only the titles/citations are yours.
+
+- **`emissions_get_vessel_nearby`** (`imos`, optional `names`, optional
+  `anchorName`) → each vessel's latest **AIS position** (lat/lon from the noon
+  report) + CII/type, for the radar. Use for "what's near X", "vessels around X",
+  "radar of X". Put the centre vessel's IMO in `imos` and its name in
+  `anchorName`. Vessels with no position on file are dropped (can't be plotted) —
+  if the centre vessel itself has no position, say so rather than recentring. Pass
+  the result **straight** to `show_vessel_nearby`.
