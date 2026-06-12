@@ -9,6 +9,7 @@
 import { getImoDcs, getEuMrvVoyage, getMrvVesselReport } from "../compliance-docs.ts";
 import { getComplianceFixture } from "../compliance-fixtures.ts";
 import { DataLakeError, getLatestNoonReport } from "../data-lake.ts";
+import { getLatestAisPositions, type AisPosition } from "../fleet-map.ts";
 import { getVoyageOverview, type VoyageOverviewRow } from "../emission-analytics.ts";
 import { emissionsFixtureImos } from "../emissions-fixtures.ts";
 import { getNoonReportFixture } from "../fixtures.ts";
@@ -252,19 +253,36 @@ const handleGetVesselCrossing = async (refs: VesselRef[], year: number, auth: st
 const handleGetVesselAwards = async (refs: VesselRef[], year: number, auth: string | undefined) =>
   projectAwards(await factsForMany(refs, year, auth));
 
-// "Nearby" radar: for each vessel gather facts (CII/type) + its latest noon-report
-// position (lat/lon) from the data-lake. Vessels with no position are dropped
-// (can't be plotted). The reference vessel is the scope centre.
-const nearbyRowFor = async (ref: VesselRef, year: number, auth: string | undefined): Promise<NearbyRow | null> => {
+// "Nearby" radar: for each vessel gather facts (CII/type) + its latest position.
+// Position source, in order of preference: live fleet-map AIS (passed in,
+// batched once per fleet) → live data-lake noon report → demo noon-report
+// fixture. Vessels with no position anywhere are dropped (can't be plotted).
+// The reference vessel is the scope centre.
+const nearbyRowFor = async (
+  ref: VesselRef,
+  year: number,
+  auth: string | undefined,
+  aisPos: AisPosition | undefined,
+): Promise<NearbyRow | null> => {
+  // Only fetch the noon report as a backstop — when AIS already gave us a fix,
+  // skip the call entirely.
   const [facts, report] = await Promise.all([
     factsFor(ref, year, auth),
-    getLatestNoonReport(ref.imo, auth).catch(() => null),
+    aisPos ? Promise.resolve(null) : getLatestNoonReport(ref.imo, auth).catch(() => null),
   ]);
-  const nav = report?.navigational_data;
-  const lat = nav?.latitude;
-  const lon = nav?.longitude;
+  let lat: number | null | undefined = aisPos?.lat ?? report?.navigational_data?.latitude;
+  let lon: number | null | undefined = aisPos?.lon ?? report?.navigational_data?.longitude;
+  // Final offline fallback: the demo noon-report fixture (offline / RBAC-denied /
+  // no report on file), so the radar still plots end-to-end. NB: the fixture is
+  // the projected NoonReportSummary shape (`position`), not the raw data-lake
+  // shape (`navigational_data`).
   if (typeof lat !== "number" || typeof lon !== "number") {
-    return null; // no position → can't plot
+    const fixture = getNoonReportFixture(ref.imo);
+    lat = fixture?.position?.latitude ?? undefined;
+    lon = fixture?.position?.longitude ?? undefined;
+  }
+  if (typeof lat !== "number" || typeof lon !== "number") {
+    return null; // no position anywhere → can't plot
   }
   return { name: facts.vesselName ?? ref.name ?? `IMO ${ref.imo}`, lat, lon, cii: facts.ciiRating, type: facts.type };
 };
@@ -275,7 +293,16 @@ const handleGetVesselNearby = async (
   year: number,
   auth: string | undefined,
 ) => {
-  const rows = (await Promise.all(refs.map((r) => nearbyRowFor(r, year, auth)))).filter((r): r is NearbyRow => r !== null);
+  // One batched fleet-map AIS call for the whole fleet (the endpoint takes all
+  // imos at once); soften any failure to an empty map so per-vessel fallbacks
+  // (noon report / fixture) still run.
+  const positions = await getLatestAisPositions(
+    refs.map((r) => r.imo),
+    auth,
+  ).catch(() => new Map<number, AisPosition>());
+  const rows = (
+    await Promise.all(refs.map((r) => nearbyRowFor(r, year, auth, positions.get(r.imo))))
+  ).filter((r): r is NearbyRow => r !== null);
   return projectNearby(referenceName, rows);
 };
 
