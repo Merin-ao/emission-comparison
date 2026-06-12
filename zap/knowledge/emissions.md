@@ -224,10 +224,14 @@ Three more widgets, all fed from real fleet data. Get IMOs from
   "hall of fame", "rank the fleet", "best & worst (and why)". Never fabricate the
   numbers — only the titles/citations are yours.
 
-- **`emissions_get_vessel_nearby`** (`imos`, optional `names`, optional
-  `anchorName`) → each vessel's latest **AIS position** (lat/lon from the noon
-  report) + CII/type, for the radar. Use for "what's near X", "vessels around X",
-  "radar of X". Put the centre vessel's IMO in `imos` and its name in
-  `anchorName`. Vessels with no position on file are dropped (can't be plotted) —
-  if the centre vessel itself has no position, say so rather than recentring. Pass
-  the result **straight** to `show_vessel_nearby`.
+- **`emissions_get_vessel_nearby`** (optional `imos`, optional `names`, optional
+  `anchorName`, optional `rangeNm`) → each vessel's latest **AIS position** + CII/type,
+  for the radar. Use for "what's near X", "vessels around X", "radar of X".
+  **Call this tool ALONE** — it self-sources the fleet and every position internally.
+  Do **NOT** call `vessel_get_fleet_vessels` or `vessel_get_vessel_positions` first;
+  just set `anchorName` to the vessel the user named and pass `rangeNm` when the user
+  asks for a range (e.g. 25, 200). Leave `imos` empty unless the user gave specific
+  IMOs — the tool plots the demo fleet around the anchor otherwise. Every vessel
+  plots (no live position falls back to a demo position) and the named centre always
+  appears, so never say "no position". Pass the result **straight** to
+  `show_vessel_nearby`.

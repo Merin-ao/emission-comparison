@@ -1,0 +1,9 @@
+node_modules/
+server/node_modules/
+dist/
+server/dist/
+.env
+server/.env
+*.log
+# local layout aid: zap-widgets is a sibling, symlinked in for colleague's "./zap-widgets" config
+/zap-widgets

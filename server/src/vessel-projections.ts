@@ -898,9 +898,12 @@ type NearbyData = z.infer<typeof nearby.input>;
 type NearbyRow = { name: string; lat: number; lon: number; cii: string | null; type: string | null };
 
 /** Project radar rows into the `vessel_nearby` widget shape. `reference` is the
- *  centre vessel's name; only vessels with a real lat/lon reach here. */
-const projectNearby = (referenceName: string, rows: NearbyRow[]): NearbyData => ({
+ *  centre vessel's name; `rangeNm` is the requested scope radius (the widget still
+ *  auto-fits when too few vessels fall inside it). Every row already has a lat/lon
+ *  (real or a deterministic dummy), so none are dropped here. */
+const projectNearby = (referenceName: string, rows: NearbyRow[], rangeNm?: number): NearbyData => ({
   reference: referenceName,
+  ...(typeof rangeNm === "number" ? { rangeNm } : {}),
   vessels: rows.map((r) => {
     const g = grade(r.cii);
     return {
