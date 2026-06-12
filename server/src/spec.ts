@@ -12,8 +12,8 @@
 
 import { z } from "zod";
 
-import { emissionAnalyticsInputSchema } from "../../zap-widgets/src/emission/schema/emission-analytics.ts";
 import {
+  emissionAnalyticsInputSchema,
   vesselBiodataDataSchema,
   vesselFlipCardDataSchema,
   vesselRoastDataSchema,
@@ -29,7 +29,7 @@ import {
   ghosted,
   crossing,
   nearby,
-} from "../../zap-widgets/src/vessel-match/schema/index.ts";
+} from "@0north/zap-widgets/schema";
 
 /**
  * `EmissionsResult` is GENERATED from the `emission_analytics` widget's Zod input
