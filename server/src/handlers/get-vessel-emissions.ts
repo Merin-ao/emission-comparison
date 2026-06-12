@@ -1,6 +1,6 @@
 import { gatherVesselFacts } from "../vessel-facts.ts";
 import { projectEmissions } from "../vessel-projections.ts";
-import type { EmissionAnalyticsInput } from "../../../zap-widgets/src/emission/schema/emission-analytics.ts";
+import type { EmissionAnalyticsInput } from "@0north/zap-widgets/schema";
 
 /**
  * The tool response shape IS the emission_analytics widget's input shape — the

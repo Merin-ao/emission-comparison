@@ -13,13 +13,13 @@
 
 import type { z } from "zod";
 
-import type { EmissionAnalyticsInput } from "../../zap-widgets/src/emission/schema/emission-analytics.ts";
+import type { EmissionAnalyticsInput } from "@0north/zap-widgets/schema";
 // `ghosted` is the catalog widget definition — imported as a VALUE so we can
 // derive its input shape (`z.infer<typeof ghosted.input>`) for lockstep typing,
 // the same single-source-of-truth contract the other projections rely on. The
 // catalog `ghostedData` schema isn't exported as a named type, so we read it off
 // the widget definition instead.
-import { ghosted, crossing, nearby } from "../../zap-widgets/src/vessel-match/schema/index.ts";
+import { ghosted, crossing, nearby } from "@0north/zap-widgets/schema";
 import type {
   VesselBiodataData,
   VesselFlipCardData,
@@ -32,7 +32,7 @@ import type {
   TrafficSignalData,
   VesselTinderData,
   TinderCandidate,
-} from "../../zap-widgets/src/vessel-match/schema/index.ts";
+} from "@0north/zap-widgets/schema";
 import type { VoyageOverviewRow } from "./emission-analytics.ts";
 import type { VesselFacts } from "./vessel-facts.ts";
 

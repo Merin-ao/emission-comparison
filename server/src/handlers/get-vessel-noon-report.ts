@@ -1,4 +1,4 @@
-import type { VesselNoonReportData } from "../../../zap-widgets/src/vessel-match/schema/index.ts";
+import type { VesselNoonReportData } from "@0north/zap-widgets/schema";
 import { DataLakeError, getLatestNoonReport, type NoonReportPD } from "../data-lake.ts";
 import { getNoonReportFixture } from "../fixtures.ts";
 
