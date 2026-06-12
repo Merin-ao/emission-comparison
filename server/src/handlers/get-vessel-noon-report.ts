@@ -1,3 +1,4 @@
+import type { VesselNoonReportData } from "../../../zap-widgets/src/vessel-match/schema/index.ts";
 import { DataLakeError, getLatestNoonReport, type NoonReportPD } from "../data-lake.ts";
 import { getNoonReportFixture } from "../fixtures.ts";
 
@@ -101,35 +102,51 @@ type NoonReportResponse = {
   message: string | null;
 };
 
+// Returns the `vessel_noon_report` widget shape (lockstep with the widget schema)
+// so the agent passes the result STRAIGHT to show_vessel_noon_report.
 const handleGetVesselNoonReport = async (
   imo: number,
   authHeader: string | undefined,
-): Promise<NoonReportResponse> => {
+  vesselName: string | null = null,
+): Promise<VesselNoonReportData> => {
   try {
     const report = await getLatestNoonReport(imo, authHeader);
-    return { imo, status: "ok", dataSource: "live", report: trim(report), message: null };
+    return { imo, vesselName, status: "ok", dataSource: "live", report: trim(report), message: null };
   } catch (err) {
-    if (err instanceof DataLakeError && err.status === 404) {
-      // Fixture fallback — only when the live API has nothing on file.
+    // Soften the EXPECTED upstream conditions so the card always renders, same as
+    // every other vessel widget: 403 (RBAC access-denied on stage), 404 (none on
+    // file), or any 5xx. A demo fixture renders when one exists for this IMO;
+    // otherwise the card shows the 'no_report' gap state. Anything else re-throws.
+    const soft =
+      err instanceof DataLakeError &&
+      (err.status === 403 || err.status === 404 || (typeof err.status === "number" && err.status >= 500));
+    if (soft) {
       const fixture = getNoonReportFixture(imo);
       if (fixture !== null) {
+        const reason =
+          (err as DataLakeError).status === 403
+            ? "the live data-lake is access-denied for this tenant on stage"
+            : "the live data-lake has none on file for this IMO in the current tenant";
         return {
           imo,
+          vesselName,
           status: "ok",
           dataSource: "fixture",
           report: fixture,
-          message:
-            "Demo fixture noon report — the live data-lake has none on file for this IMO in the current tenant.",
+          message: `Demo fixture noon report — ${reason}. Present it as demo/illustrative, not live data.`,
         };
       }
+      const why =
+        (err as DataLakeError).status === 403
+          ? `Access denied (403) to the data-lake for IMO ${imo} on stage. `
+          : `No noon report on file for IMO ${imo}. `;
       return {
         imo,
+        vesselName,
         status: "no_report",
         dataSource: "live",
         report: null,
-        message:
-          `No noon report on file for IMO ${imo}. ` +
-          "Fall back to AIS trail (vessel_get_vessel_trail / vessel_get_vessel_positions) and acknowledge the gap.",
+        message: why + "Fall back to AIS trail (vessel_get_vessel_trail / vessel_get_vessel_positions) and acknowledge the gap.",
       };
     }
     throw err;

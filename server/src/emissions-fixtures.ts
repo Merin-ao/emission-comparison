@@ -33,6 +33,26 @@ type EmissionsFigures = {
 };
 
 const fixtures: Record<number, EmissionsFigures> = {
+  // Methane Sapphire (9710022) — the canonical demo vessel used in the biodata
+  // schema example, the routing eval and the Storybook stories. Mirrors that
+  // worked example (LNG carrier, CII A, FuelEU surplus) so the same IMO renders
+  // end-to-end locally when the live API is RBAC-denied.
+  9710022: {
+    euEtsExposure: 0,
+    ciiRating: "A",
+    ciiAttained: 4.92,
+    ciiRequired: 5.8,
+    fuelEuComplianceBalance: 1_820,
+    fuelEuPenaltyCost: 0,
+    dwt: 95_000,
+    eligibility: { euMrv: true, ukMrv: true, fuelEu: true, euEts: true },
+    type: "LNG carrier",
+    co2eq: 31_200,
+    iceClass: "1A",
+    averageSpeed: 14.1,
+    yearOfBuild: 2024,
+    distanceSailed: 84_200,
+  },
   // MV Captain's Pride — pairs with the noon-report fixture for the same IMO.
   // CII "C" (on the band edge), small FuelEU deficit, moderate EU ETS bill.
   9920760: {

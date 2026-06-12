@@ -23,7 +23,10 @@ const fixtures: Record<number, NoonReportSummary> = {
     imo: 9920760,
     voyageNr: "42",
     reportType: "noon_at_sea",
-    datetimeGmt: "2026-06-10T12:00:00Z",
+    // Reporting daily — recent. In the `vessel_ghosted` demo this is the green
+    // "still interested" row. (Demo dates are absolute, pinned near 2026-06-12;
+    // they age into staler tiers over time — re-baseline for a fresh demo.)
+    datetimeGmt: "2026-06-11T12:00:00Z",
     position: {
       latitude: 16.13,
       longitude: 66.4,
@@ -54,7 +57,8 @@ const fixtures: Record<number, NoonReportSummary> = {
     imo: 1234567,
     voyageNr: "117",
     reportType: "at_anchor",
-    datetimeGmt: "2026-06-10T12:00:00Z",
+    // Cooling off — a few days quiet. The amber "it's been N days" row.
+    datetimeGmt: "2026-06-06T12:00:00Z",
     position: {
       latitude: 1.21,
       longitude: 103.85,
@@ -85,7 +89,8 @@ const fixtures: Record<number, NoonReportSummary> = {
     imo: 1234568,
     voyageNr: "303",
     reportType: "noon_at_sea",
-    datetimeGmt: "2026-06-10T12:00:00Z",
+    // Gone dark for ~2 weeks — the red "officially ghosted" row, the dramatic one.
+    datetimeGmt: "2026-05-30T12:00:00Z",
     position: {
       latitude: -34.36,
       longitude: 18.47,

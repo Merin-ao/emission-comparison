@@ -3,8 +3,8 @@
  *
  * One vessel → one normalized `VesselFacts`, assembled from up to three
  * emission-analytics-api calls (vessel-details, year-to-date-cii, fuel-eu).
- * Every widget projection (biodata, roast, traffic-signal, love-meter, match,
- * breakup, pooling, and the emission_analytics card) derives purely from this —
+ * Every widget projection (biodata, roast, love-meter, breakup, pooling, and
+ * the emission_analytics card) derives purely from this —
  * so the upstream wiring lives in ONE place and the widgets never invent data.
  *
  * Graceful degradation matches the emissions handler: 403/404/fetch-failure on
@@ -50,6 +50,9 @@ type VesselFacts = {
   prevCiiAttained: number | null;
   /** Year-on-year CII direction. */
   ciiTrend: "up" | "down" | "flat" | null;
+  /** Verbatim `/year-to-date-cii` response for this vessel, kept for the flip-card
+   *  raw download. Null when that call didn't return usable data (403 / fixture). */
+  ytdCiiRaw: Record<string, unknown> | null;
   /** EU ETS carbon cost (EUA cost) in EUR. */
   etsCost: number | null;
   /** Total CO2eq emissions (tonnes). */
@@ -85,6 +88,32 @@ const soft = async <T>(fn: () => Promise<T>, seen: SeenStatus): Promise<T | null
       if (seen.status === null) seen.status = err.status;
       const s = err.status;
       if (s === 403 || s === 404 || s === "fetch_failed" || (typeof s === "number" && s >= 500)) {
+        return null;
+      }
+    }
+    throw err;
+  }
+};
+
+/** Like `soft`, but additionally tolerates parameter-validation / auth 4xx
+ *  (400 / 401 / 422) as "no live data". The regulatory-document endpoints
+ *  (IMO DCS / EU-UK MRV) reject the bare `{ year }` query with a 400/422
+ *  "missing required parameters" before RBAC even applies — unlike the main
+ *  emission endpoints, which only 403 on stage. Without this, that 4xx escapes
+ *  the divorce handler and surfaces as a 502 instead of degrading to the demo
+ *  compliance fixture. Kept separate from `soft` so the main fact-gathering
+ *  path stays strict and a genuine 4xx there still throws loudly. */
+const softDoc = async <T>(fn: () => Promise<T>, seen: SeenStatus): Promise<T | null> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof EmissionsError) {
+      if (seen.status === null) seen.status = err.status;
+      const s = err.status;
+      if (
+        s === 400 || s === 401 || s === 422 ||
+        s === 403 || s === 404 || s === "fetch_failed" || (typeof s === "number" && s >= 500)
+      ) {
         return null;
       }
     }
@@ -164,6 +193,9 @@ const gatherVesselFacts = async (
     prevCiiRating: refRating(cii?.previousYearCiiAndRating?.attained),
     prevCiiAttained: refCii(cii?.previousYearCiiAndRating?.attained),
     ciiTrend: trend,
+    // Keep the full parsed response verbatim — `cii` is the whole JSON; its TS type
+    // is just the narrow view we project from. Null when the call didn't return data.
+    ytdCiiRaw: (cii as Record<string, unknown> | null) ?? null,
     etsCost: details?.vesselEuEtsExposure?.totalEuaCost ?? null,
     co2eq: details?.vesselEuEtsExposure?.totalCo2Emission ?? details?.fuelConsumption?.totalCo2Emission ?? null,
     distanceSailed: details?.performance?.distanceSailed ?? null,
@@ -232,5 +264,5 @@ const gatherVesselFacts = async (
   return facts;
 };
 
-export { gatherVesselFacts, soft };
+export { gatherVesselFacts, soft, softDoc };
 export type { VesselFacts, Eligibility };

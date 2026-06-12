@@ -13,6 +13,13 @@ const EMISSIONS_BASE_URL =
   process.env.EMISSIONS_BASE_URL ??
   "https://api.private.stage.zeronorth.app/emission-analytics-api";
 
+// Hard cap on a single upstream call. Without it a slow/unreachable upstream
+// hangs the fetch forever — and the handlers' try/catch only catches a *rejected*
+// fetch, not a hang, so the whole tool call stalls until the ZAP platform times it
+// out and the agent reports a "connectivity problem". A bounded timeout turns the
+// hang into a normal rejection, which the handlers already degrade to a fixture.
+const EMISSIONS_TIMEOUT_MS = Number(process.env.EMISSIONS_TIMEOUT_MS ?? 8000);
+
 class EmissionsError extends Error {
   readonly status: number | "fetch_failed";
   readonly body: string;
@@ -38,7 +45,7 @@ const request = async <T>(
 
   let res: Response;
   try {
-    res = await fetch(url, { headers });
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(EMISSIONS_TIMEOUT_MS) });
   } catch (e) {
     throw new EmissionsError("fetch_failed", String(e), `emission-analytics ${path} fetch failed`);
   }
@@ -62,7 +69,12 @@ const requestPost = async <T>(path: string, body: unknown, authHeader: string | 
 
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(EMISSIONS_TIMEOUT_MS),
+    });
   } catch (e) {
     throw new EmissionsError("fetch_failed", String(e), `emission-analytics ${path} fetch failed`);
   }
@@ -150,5 +162,37 @@ type VesselCharacteristics = {
 const getVesselCharacteristics = (imos: number[], year: number, auth: string | undefined) =>
   requestPost<VesselCharacteristics[]>("/vessel-characteristics", { imos, year }, auth);
 
-export { EmissionsError, getFuelEuDetails, getYearToDateCii, getVesselDetails, getVesselCharacteristics };
-export type { CiiRef, FuelEuDetails, YearToDateCii, VesselDetails, VesselCharacteristics };
+/** One voyage row from the voyage-overview dashboard. Only the fields the voyage
+ *  swipe deck projects are typed; `departure`/`arrival` carry the route ports and
+ *  `voyageLegs[].isEuMrvEligible` drives the derived EU-port-activity share. */
+type VoyageOverviewRow = {
+  imo?: number | null;
+  vesselName?: string | null;
+  segment?: string | null;
+  attained?: { rating?: string | null } | null;
+  departure?: { portName?: string | null } | null;
+  arrival?: { portName?: string | null } | null;
+  totalDistance?: number | null;
+  voyageLegs?: { isEuMrvEligible?: boolean | null }[] | null;
+};
+
+type VoyageOverview = { data?: VoyageOverviewRow[] | null; count?: number | null };
+
+/** Voyage-overview dashboard rows (one per voyage). Paginated upstream — `limit`
+ *  and `offset` are required; we default to a single page of recent voyages. */
+const getVoyageOverview = (
+  year: number,
+  auth: string | undefined,
+  opts: { limit?: number; offset?: number } = {},
+) => request<VoyageOverview>("/voyage-overview", { year, limit: opts.limit ?? 20, offset: opts.offset ?? 0 }, auth);
+
+export {
+  EmissionsError,
+  request,
+  getFuelEuDetails,
+  getYearToDateCii,
+  getVesselDetails,
+  getVesselCharacteristics,
+  getVoyageOverview,
+};
+export type { CiiRef, FuelEuDetails, YearToDateCii, VesselDetails, VesselCharacteristics, VoyageOverview, VoyageOverviewRow };

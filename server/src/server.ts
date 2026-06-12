@@ -6,12 +6,17 @@ import { handleGetVesselEmissions } from "./handlers/get-vessel-emissions.ts";
 import { handleGetVesselNoonReport } from "./handlers/get-vessel-noon-report.ts";
 import {
   handleGetVesselBiodata,
+  handleGetVesselFlipCard,
   handleGetVesselRoast,
-  handleGetVesselTrafficSignal,
   handleGetVesselLoveMeter,
-  handleGetVesselMatch,
   handleGetVesselPooling,
   handleGetVesselBreakup,
+  handleGetVesselDivorce,
+  handleGetVesselWelcome,
+  handleGetVesselTrafficSignal,
+  handleGetVesselTinderVoyage,
+  handleGetVesselDowry,
+  handleGetVesselGhosted,
   type VesselRef,
 } from "./handlers/get-vessel-widgets.ts";
 import { spec } from "./spec.ts";
@@ -20,6 +25,20 @@ const PORT = Number(process.env.PORT ?? 9001);
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? "info" },
+});
+
+// TEMP DIAGNOSTIC (remove): mirror each inbound request to a file so we can see
+// exactly which tools the agent hits on a welcome-chip click.
+import { appendFileSync } from "node:fs";
+app.addHook("onRequest", async (req) => {
+  try {
+    appendFileSync(
+      "/tmp/zap-toolserver-requests.log",
+      `${new Date().toISOString()} ${req.method} ${req.url}\n`,
+    );
+  } catch {
+    /* best-effort */
+  }
 });
 
 // Pass the operator's bearer token through to the upstreams. The ZAP platform
@@ -88,6 +107,7 @@ const parseRefs = (imos: string | undefined, names: string | undefined): VesselR
 
 const mapError = (reply: FastifyReply, err: unknown): unknown => {
   if (err instanceof DataLakeError || err instanceof EmissionsError) {
+    app.log.error({ err, status: (err as EmissionsError).status, body: (err as EmissionsError).body }, "upstream error -> 502");
     return reply.code(502).send({ error: err.message });
   }
   if (err instanceof Error) {
@@ -122,14 +142,14 @@ app.get<{ Querystring: { imo?: string; year?: string; vesselName?: string } }>(
   },
 );
 
-app.get<{ Querystring: { imo?: string } }>("/get_vessel_noon_report", async (req, reply) => {
+app.get<{ Querystring: { imo?: string; vesselName?: string } }>("/get_vessel_noon_report", async (req, reply) => {
   const imo = parseImo(req.query.imo);
   if (imo === null) return reply.code(400).send({ error: "`imo` is required (7-digit integer)" });
   const auth = authOf(req.headers);
   logTokenIfDebug(auth, "get_vessel_noon_report");
   app.log.info({ tenant: tenantOf(auth), imo }, "get_vessel_noon_report");
   try {
-    return await handleGetVesselNoonReport(imo, auth);
+    return await handleGetVesselNoonReport(imo, auth, req.query.vesselName?.trim() || null);
   } catch (err) {
     return mapError(reply, err);
   }
@@ -155,6 +175,24 @@ app.get<{ Querystring: { imo?: string; year?: string; vesselName?: string } }>(
   },
 );
 
+app.get<{ Querystring: { imo?: string; year?: string; vesselName?: string } }>(
+  "/get_vessel_flip_card",
+  async (req, reply) => {
+    const imo = parseImo(req.query.imo);
+    if (imo === null) return reply.code(400).send({ error: "`imo` is required (7-digit integer)" });
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    logTokenIfDebug(auth, "get_vessel_flip_card");
+    app.log.info({ tenant: tenantOf(auth), imo, year }, "get_vessel_flip_card");
+    try {
+      // Same data as biodata — a flip-card presentation of the same payload.
+      return await handleGetVesselFlipCard({ imo, name: req.query.vesselName?.trim() || null }, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
 app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
   "/get_vessel_roast",
   async (req, reply) => {
@@ -165,23 +203,6 @@ app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
     app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_roast");
     try {
       return await handleGetVesselRoast(refs, year, auth);
-    } catch (err) {
-      return mapError(reply, err);
-    }
-  },
-);
-
-app.get<{ Querystring: { imos?: string; names?: string; anchorName?: string; year?: string } }>(
-  "/get_vessel_traffic_signal",
-  async (req, reply) => {
-    const refs = parseRefs(req.query.imos, req.query.names);
-    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
-    const year = parseYear(req.query.year);
-    const auth = authOf(req.headers);
-    const anchor = req.query.anchorName?.trim() || refs[0].name || `IMO ${refs[0].imo}`;
-    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_traffic_signal");
-    try {
-      return await handleGetVesselTrafficSignal(anchor, refs, year, auth);
     } catch (err) {
       return mapError(reply, err);
     }
@@ -206,23 +227,6 @@ app.get<{ Querystring: { imoA?: string; imoB?: string; nameA?: string; nameB?: s
         year,
         auth,
       );
-    } catch (err) {
-      return mapError(reply, err);
-    }
-  },
-);
-
-app.get<{ Querystring: { imos?: string; names?: string; anchorName?: string; year?: string } }>(
-  "/get_vessel_match",
-  async (req, reply) => {
-    const refs = parseRefs(req.query.imos, req.query.names);
-    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
-    const year = parseYear(req.query.year);
-    const auth = authOf(req.headers);
-    const anchor = req.query.anchorName?.trim() || `Match deck (${refs.length} vessels)`;
-    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_match");
-    try {
-      return await handleGetVesselMatch(anchor, refs, year, auth);
     } catch (err) {
       return mapError(reply, err);
     }
@@ -276,12 +280,170 @@ app.get<{
   }
 });
 
-app
-  .listen({ port: PORT, host: "0.0.0.0" })
-  .then((address) => {
+app.get<{
+  Querystring: {
+    imo?: string;
+    counterpartyImo?: string;
+    vesselName?: string;
+    counterpartyName?: string;
+    year?: string;
+  };
+}>("/get_vessel_divorce", async (req, reply) => {
+  const imo = parseImo(req.query.imo);
+  if (imo === null) return reply.code(400).send({ error: "`imo` is required (7-digit integer)" });
+  const counterparty = parseImo(req.query.counterpartyImo);
+  const year = parseYear(req.query.year);
+  const auth = authOf(req.headers);
+  logTokenIfDebug(auth, "get_vessel_divorce");
+  app.log.info({ tenant: tenantOf(auth), imo, year }, "get_vessel_divorce");
+  try {
+    return await handleGetVesselDivorce(
+      { imo, name: req.query.vesselName?.trim() || null },
+      counterparty === null ? null : { imo: counterparty, name: req.query.counterpartyName?.trim() || null },
+      year,
+      auth,
+    );
+  } catch (err) {
+    return mapError(reply, err);
+  }
+});
+
+app.get<{ Querystring: { imos?: string; names?: string; year?: string; operatorName?: string } }>(
+  "/get_vessel_welcome",
+  async (req, reply) => {
+    // imos is optional — a bare greeting may arrive before any fleet lookup; the
+    // handler falls back to the demo fixture vessels in that case.
+    const refs = parseRefs(req.query.imos, req.query.names);
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_welcome");
+    try {
+      return await handleGetVesselWelcome(refs, year, auth, req.query.operatorName?.trim() || null);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
+  "/get_vessel_dowry",
+  async (req, reply) => {
+    const refs = parseRefs(req.query.imos, req.query.names);
+    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_dowry");
+    try {
+      return await handleGetVesselDowry(refs, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+app.get<{ Querystring: { imos?: string; names?: string } }>("/get_vessel_ghosted", async (req, reply) => {
+  const refs = parseRefs(req.query.imos, req.query.names);
+  if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
+  const auth = authOf(req.headers);
+  app.log.info({ tenant: tenantOf(auth), count: refs.length }, "get_vessel_ghosted");
+  try {
+    return await handleGetVesselGhosted(refs, auth);
+  } catch (err) {
+    return mapError(reply, err);
+  }
+});
+
+app.get<{ Querystring: { anchorName?: string; imos?: string; names?: string; year?: string } }>(
+  "/get_vessel_traffic_signal",
+  async (req, reply) => {
+    // imos optional — falls back to the demo fixture vessels for a populated deck.
+    const refs = parseRefs(req.query.imos, req.query.names);
+    const anchorName = req.query.anchorName?.trim() || "your fleet";
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_traffic_signal");
+    try {
+      return await handleGetVesselTrafficSignal(anchorName, refs, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+app.get<{ Querystring: { imo?: string; year?: string } }>(
+  "/get_vessel_tinder_voyage",
+  async (req, reply) => {
+    // imo is the optional anchor (the user's own vessel); candidates come from the
+    // voyage-overview dashboard. Falls back to a demo deck when unavailable.
+    const anchorImo = parseImo(req.query.imo);
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), anchorImo, year }, "get_vessel_tinder_voyage");
+    try {
+      return await handleGetVesselTinderVoyage(anchorImo, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+// Map a clicked-chip prompt to the exact next tool the agent must call. The chip
+// labels are stable; we match on the distinctive phrase each prompt carries (flip
+// card / love meter prompts also embed a vessel name, hence substring matching).
+// Returning the tool name explicitly removes the agent's guesswork — it no longer
+// has to re-derive routing from a prose table, which is what left clicks stuck at
+// "Opening …" with no widget rendered.
+const TOOL_BY_PROMPT: ReadonlyArray<{ match: RegExp; tool: string; render: string }> = [
+  { match: /swipe|vessel matches/i, tool: "emissions_get_vessel_traffic_signal", render: "show_vessel_traffic_signal" },
+  { match: /voyage/i, tool: "emissions_get_vessel_tinder_voyage", render: "show_vessel_tinder_voyage" },
+  { match: /flip card/i, tool: "emissions_get_vessel_flip_card", render: "show_vessel_flip_card" },
+  { match: /love meter/i, tool: "emissions_get_vessel_love_meter", render: "show_vessel_love_meter" },
+];
+
+const routeForPrompt = (prompt: string): { tool: string; render: string } | null =>
+  TOOL_BY_PROMPT.find((r) => r.match.test(prompt)) ?? null;
+
+// Gated by the vessel_welcome approval widget (x-zap-approval-widget). The agent
+// provides the welcome data (widget input); the platform renders the interactive
+// card; when the user clicks a chip the widget submits { prompt } and the platform
+// calls this endpoint with it. We resolve the prompt to the exact next tool and
+// return it so the agent calls that tool (then its show_ render tool) without
+// having to interpret a routing table.
+app.post<{ Body: { prompt?: string } }>("/present_welcome", async (req, reply) => {
+  const prompt = (req.body?.prompt ?? "").trim();
+  if (!prompt) return reply.code(400).send({ error: "`prompt` is required" });
+  const route = routeForPrompt(prompt);
+  app.log.info({ prompt, route }, "present_welcome");
+  return {
+    prompt,
+    nextTool: route?.tool ?? null,
+    renderTool: route?.render ?? null,
+  };
+});
+
+// `tsx watch` restarts this process on every save, and the new child often starts
+// before the old one has released port 9001 — a brief EADDRINUSE race. With a bare
+// `process.exit(1)` that race left the watcher dead and the port unserved, so the
+// ZAP platform couldn't reach the tool and the agent reported "connectivity issues".
+// Retry the bind a few times so a reload reliably reclaims the port instead of
+// crashing; only a genuinely stuck port (or a non-EADDRINUSE error) is fatal.
+const LISTEN_RETRIES = 5;
+const LISTEN_RETRY_MS = 300;
+
+const start = async (attempt = 1): Promise<void> => {
+  try {
+    const address = await app.listen({ port: PORT, host: "0.0.0.0" });
     app.log.info({ address }, "Emissions tool server listening");
-  })
-  .catch((err) => {
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "EADDRINUSE" && attempt <= LISTEN_RETRIES) {
+      app.log.warn({ attempt, port: PORT }, `port ${PORT} in use, retrying in ${LISTEN_RETRY_MS}ms`);
+      await new Promise((resolve) => setTimeout(resolve, LISTEN_RETRY_MS));
+      return start(attempt + 1);
+    }
     app.log.error({ err }, "failed to start");
     process.exit(1);
-  });
+  }
+};
+
+start();

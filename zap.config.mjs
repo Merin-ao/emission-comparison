@@ -6,6 +6,11 @@ export default {
     TENANT: "trafigura", // tenant you log into; "demo" is the platform default
   },
   widgets: "./zap-widgets",
+  eval: {
+    // Discover the domain's eval suites (otherwise vitest falls back to its
+    // default **/*.{test,spec} glob and finds none of the *.eval.ts files).
+    include: ["zap/evals/**/*.eval.?(c|m)[jt]s?(x)"],
+  },
   sources: {
     localDomains: [
       // emissions tool server (server/, Fastify+TS) — run `cd server && PORT=9001 npm start`

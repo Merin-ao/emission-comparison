@@ -13,6 +13,11 @@
 const DATA_LAKE_BASE_URL =
   process.env.DATA_LAKE_BASE_URL ?? "https://dl.stage.zeronorth.app/data-lake";
 
+// Hard cap on a single upstream call so a slow/unreachable data-lake rejects
+// rather than hanging the tool call until the platform times it out. See the
+// matching note in emission-analytics.ts.
+const DATA_LAKE_TIMEOUT_MS = Number(process.env.DATA_LAKE_TIMEOUT_MS ?? 8000);
+
 class DataLakeError extends Error {
   readonly status: number;
   readonly body: string;
@@ -36,7 +41,14 @@ const request = async <T>(
   const headers: Record<string, string> = { Accept: "application/json" };
   if (authHeader) headers.Authorization = authHeader;
 
-  const res = await fetch(url, { headers });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(DATA_LAKE_TIMEOUT_MS) });
+  } catch (e) {
+    // Network failure or timeout — surface as a typed 504 so callers see a
+    // bounded DataLakeError instead of a raw, unbounded throw.
+    throw new DataLakeError(504, String(e), `Data Lake ${path} fetch failed`);
+  }
   const text = await res.text();
   if (!res.ok) {
     throw new DataLakeError(

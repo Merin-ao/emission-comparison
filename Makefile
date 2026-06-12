@@ -27,12 +27,20 @@ install: ## install deps for the tool server
 tools: ## start the emissions tool server on :$(TOOL_PORT)
 	cd server && PORT=$(TOOL_PORT) npm start
 
+.PHONY: patch-splash
+patch-splash: ## inject the Vessel Tinder welcome splash into the installed frontend
+	node scripts/patch-welcome-splash.mjs
+
+.PHONY: unpatch-splash
+unpatch-splash: ## restore the stock ZAP welcome splash
+	node scripts/patch-welcome-splash.mjs --restore
+
 .PHONY: serve
-serve: ## start `zap serve` with local widgets
+serve: patch-splash ## start `zap serve` with local widgets (splash patched first)
 	AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) zap serve --widgets ./zap-widgets
 
 .PHONY: start
-start: stop ## boot tool server + zap serve together (logs interleaved; Ctrl+C stops both)
+start: stop patch-splash ## boot tool server + zap serve together (logs interleaved; Ctrl+C stops both)
 	@echo ">> launching tool server (:$(TOOL_PORT)) and zap serve (:$(SERVE_PORT))"
 	@trap 'echo; echo ">> shutting down"; lsof -ti :$(TOOL_PORT) :$(SERVE_PORT) 2>/dev/null | xargs kill 2>/dev/null; exit 0' INT TERM; \
 	(cd server && PORT=$(TOOL_PORT) npm start 2>&1 | sed -e 's/^/[tools] /') & \

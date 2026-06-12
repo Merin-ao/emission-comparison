@@ -15,13 +15,19 @@ import { z } from "zod";
 import { emissionAnalyticsInputSchema } from "../../zap-widgets/src/emission/schema/emission-analytics.ts";
 import {
   vesselBiodataDataSchema,
+  vesselFlipCardDataSchema,
   vesselRoastDataSchema,
-  vesselTrafficSignalDataSchema,
   vesselLoveMeterDataSchema,
-  vesselTinderMatchDataSchema,
   vesselBreakupDataSchema,
+  vesselDivorceDataSchema,
+  vesselNoonReportDataSchema,
   vesselPoolingMeterDataSchema,
-} from "../../zap-widgets/src/vessel-tinder/schema/index.ts";
+  vesselWelcomeDataSchema,
+  welcomeActionSchema,
+  trafficSignalDataSchema,
+  vesselTinderDataSchema,
+  ghosted,
+} from "../../zap-widgets/src/vessel-match/schema/index.ts";
 
 /**
  * `EmissionsResult` is GENERATED from the `emission_analytics` widget's Zod input
@@ -80,12 +86,20 @@ const toOpenApi = (schema: z.ZodType) =>
   inlineDefs(z.toJSONSchema(schema, { target: "openapi-3.0" }) as Record<string, unknown>);
 
 const vesselBiodataResult = toOpenApi(vesselBiodataDataSchema);
+const vesselFlipCardResult = toOpenApi(vesselFlipCardDataSchema);
 const vesselRoastResult = toOpenApi(vesselRoastDataSchema);
-const vesselTrafficSignalResult = toOpenApi(vesselTrafficSignalDataSchema);
 const vesselLoveMeterResult = toOpenApi(vesselLoveMeterDataSchema);
-const vesselMatchResult = toOpenApi(vesselTinderMatchDataSchema);
 const vesselBreakupResult = toOpenApi(vesselBreakupDataSchema);
+const vesselDivorceResult = toOpenApi(vesselDivorceDataSchema);
+const vesselNoonReportResult = toOpenApi(vesselNoonReportDataSchema);
 const vesselPoolingResult = toOpenApi(vesselPoolingMeterDataSchema);
+const vesselWelcomeResult = toOpenApi(vesselWelcomeDataSchema);
+const welcomeActionResult = toOpenApi(welcomeActionSchema);
+const vesselTrafficSignalResult = toOpenApi(trafficSignalDataSchema);
+const vesselTinderVoyageResult = toOpenApi(vesselTinderDataSchema);
+// The `ghosted` catalog widget doesn't export a named data schema — read it off
+// the widget definition's `.input` so the response stays in lockstep with it.
+const vesselGhostedResult = toOpenApi(ghosted.input);
 
 // Shared query parameters for the vessel-tinder tools.
 const imoParam = {
@@ -183,7 +197,7 @@ const spec = {
         operationId: "get_vessel_noon_report",
         summary: "Latest noon report for a vessel",
         description:
-          "Fetch the latest noon report for a vessel — the daily status entry a captain submits, from the ZeroNorth data-lake. Returns position, course, speed, distance run in the last 24 h, observed weather, fuel ROBs, 24 h fuel consumption, and origin/destination ports. Use this to ground operational facts (where the vessel is, how fast, how much fuel) instead of guessing. Always 200: if `report` is non-null use it; if null (`status: 'no_report'`), fall back to AIS trail (vessel_get_vessel_trail) and acknowledge the gap. `dataSource` is 'live' from the data-lake or 'fixture' for a demo fallback in sparse tenants — mention 'demo fixture data' when it is 'fixture'.",
+          "Fetch the latest noon report for a vessel — the daily status entry a captain submits, from the ZeroNorth data-lake — and render it as the noon-report card. Returns position, course, speed, distance run in the last 24 h, observed weather, fuel ROBs, 24 h fuel consumption, and origin/destination ports. Use whenever the user asks about a vessel's noon report, where it is right now, its latest position / course / speed, how far it ran in the last day, the weather on board, or its current fuel on board / burn. Pass the result STRAIGHT to show_vessel_noon_report — do NOT reshape. Always 200: if `status` is 'ok' a noon report (or fixture) was found; if 'no_report', the card shows the gap and `message` says to fall back to the AIS trail. `dataSource` is 'live' from the data-lake or 'fixture' for a demo fallback in sparse tenants — mention 'demo fixture data' when it is 'fixture'. Pass `vesselName` when known so the card header shows the name.",
         parameters: [
           {
             name: "imo",
@@ -193,46 +207,12 @@ const spec = {
               "IMO number of the vessel (7-digit integer). Use a real IMO from the fleet; never guess one.",
             schema: { type: "integer", minimum: 1000000, maximum: 9999999 },
           },
+          vesselNameParam,
         ],
         responses: {
           "200": {
-            description:
-              "Always 200. If `report` is non-null a noon report (or fixture) was found; if null, fall back to AIS + weather and quote `message`.",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  required: ["imo", "status", "dataSource", "report", "message"],
-                  properties: {
-                    imo: { type: "integer", description: "Echoed IMO." },
-                    status: {
-                      type: "string",
-                      enum: ["ok", "no_report"],
-                      description:
-                        "'ok' = report present (use `report`). 'no_report' = none on file (use vessel_get_vessel_trail for position).",
-                    },
-                    dataSource: {
-                      type: "string",
-                      enum: ["live", "fixture"],
-                      description:
-                        "'live' = from the data-lake. 'fixture' = a hand-authored demo fallback (only in tenants with sparse noon-report data). Mention 'demo fixture data' in the answer when this is 'fixture'.",
-                    },
-                    report: {
-                      nullable: true,
-                      description:
-                        "The trimmed noon report when one was on file (or a fixture), otherwise null.",
-                      allOf: [{ $ref: "#/components/schemas/NoonReportSummary" }],
-                    },
-                    message: {
-                      type: "string",
-                      nullable: true,
-                      description:
-                        "Populated for 'no_report' and fixture responses — a short human-readable explanation.",
-                    },
-                  },
-                },
-              },
-            },
+            description: "vessel_noon_report widget payload — pass it STRAIGHT to show_vessel_noon_report.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselNoonReport" } } },
           },
         },
       },
@@ -242,12 +222,27 @@ const spec = {
         operationId: "get_vessel_biodata",
         summary: "Vessel biodata profile (matrimonial-style card)",
         description:
-          "Real 'biodata' profile for one vessel by IMO: type, DWT, attained vs last-year CII, EU ETS cost, FuelEU position and CO₂eq, sourced from emission-analytics. Use this whenever the user asks for a single vessel's profile in any phrasing — \"biodata of <vessel>\", \"tell me about <vessel>\", \"<vessel> details/detail\", \"<vessel> portfolio\" / \"portfolio information\", \"who is <vessel>\", \"profile <vessel>\", or \"show me <vessel>\". This is the default card for an open-ended ask about one named vessel. Pass the result STRAIGHT to show_vessel_biodata — do NOT reshape. Always 200; figures fall back to demo fixture or read 'n/a' when the live API is unavailable.",
+          "Real 'biodata' profile for one vessel by IMO: type, DWT, attained vs last-year CII, EU ETS cost, FuelEU position and CO₂eq, sourced from emission-analytics. Use this whenever the user asks for a single vessel's profile in any phrasing — \"biodata of <vessel>\", \"tell me about <vessel>\" / \"tell me about the vessel\", \"<vessel> details/detail\" / \"show details\", \"<vessel> portfolio\" / \"portfolio information\", \"who is <vessel>\", \"profile <vessel>\", \"show me <vessel>\", \"information\" / \"vessel information\" / \"information about <vessel>\", or \"what is this vessel\". This is the default card for any open-ended ask about a single vessel. The vessel may be named, given by IMO, or referred to contextually (\"this vessel\" / \"the vessel\") — in the contextual case, use the IMO of the vessel discussed earlier in the conversation, and ask which vessel if none has been established (never guess an IMO). Use emissions_get_vessel_emissions instead only when the user specifically asks for emissions / CII / EU ETS / FuelEU figures. Pass the result STRAIGHT to show_vessel_biodata — do NOT reshape. Always 200; figures fall back to demo fixture or read 'n/a' when the live API is unavailable.",
         parameters: [imoParam, yearParam, vesselNameParam],
         responses: {
           "200": {
             description: "vessel_biodata widget payload.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/VesselBiodata" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_flip_card": {
+      get: {
+        operationId: "get_vessel_flip_card",
+        summary: "Vessel flip card (Tinder-style trading card)",
+        description:
+          "A playful 'flip card' / trading card for one vessel by IMO — a tappable card whose front shows the CII grade and key particulars and whose back flips to reveal full disclosure, fun facts and financial standing, with a download-to-PDF action. Backed by the SAME emission-analytics data as get_vessel_biodata. Use ONLY when the user explicitly asks for a \"flip card\", \"trading card\", \"card view\", or \"swipe card\" of a vessel. For any other single-vessel profile / details / biodata / information ask, use get_vessel_biodata instead (it is the default single-vessel card). The vessel may be named, given by IMO, or referred to contextually — never guess an IMO. Pass the result STRAIGHT to show_vessel_flip_card — do NOT reshape. Always 200; figures fall back to demo fixture or read 'n/a' when the live API is unavailable.",
+        parameters: [imoParam, yearParam, vesselNameParam],
+        responses: {
+          "200": {
+            description: "vessel_flip_card widget payload (biodata shape + optional raw ytdCiiRaw).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselFlipCard" } } },
           },
         },
       },
@@ -263,32 +258,6 @@ const spec = {
           "200": {
             description: "vessel_roast widget payload.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/VesselRoast" } } },
-          },
-        },
-      },
-    },
-    "/get_vessel_traffic_signal": {
-      get: {
-        operationId: "get_vessel_traffic_signal",
-        summary: "Green/amber/red charter screen",
-        description:
-          "Screen vessels for chartering, each rated green/amber/red from its real CII grade. Use when the user wants a go/caution/stop view across candidate vessels. Pass the result STRAIGHT to show_vessel_traffic_signal.",
-        parameters: [
-          imosParam,
-          namesParam,
-          {
-            name: "anchorName",
-            in: "query",
-            required: false,
-            description: "The charter or anchor vessel the screen is run for (card header).",
-            schema: { type: "string" },
-          },
-          yearParam,
-        ],
-        responses: {
-          "200": {
-            description: "vessel_traffic_signal widget payload.",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselTrafficSignal" } } },
           },
         },
       },
@@ -314,32 +283,6 @@ const spec = {
         },
       },
     },
-    "/get_vessel_match": {
-      get: {
-        operationId: "get_vessel_match",
-        summary: "Ranked vessel match deck",
-        description:
-          "Rank candidate vessels for a charter by a composite score built from real CII, EU ETS, FuelEU and history signals; builtYear/DWT come from /vessel-characteristics. Use when the user wants the best-matched vessels. Pass the result STRAIGHT to show_vessel_tinder_match.",
-        parameters: [
-          imosParam,
-          namesParam,
-          {
-            name: "anchorName",
-            in: "query",
-            required: false,
-            description: "The anchor (vessel, IMO, or cargo) the match deck was built for (card header).",
-            schema: { type: "string" },
-          },
-          yearParam,
-        ],
-        responses: {
-          "200": {
-            description: "vessel_tinder_match widget payload.",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselTinderMatch" } } },
-          },
-        },
-      },
-    },
     "/get_vessel_pooling": {
       get: {
         operationId: "get_vessel_pooling",
@@ -360,7 +303,7 @@ const spec = {
         operationId: "get_vessel_breakup",
         summary: "Break-up letter for an incompatible vessel",
         description:
-          "Cinematic 'break-up' with a poorly-performing vessel: red-flag reasons, CO₂ and EU ETS saved by moving on (its real figures), and a cleaner rebound. Use when the user wants to dramatically reject a vessel. Pass the result STRAIGHT to show_vessel_breakup.",
+          "Cinematic 'break-up' with a poorly-performing vessel: red-flag reasons (CII grade, vessel age, FuelEU/EU ETS exposure), CO₂ and EU ETS saved by moving on (its real figures), and a cleaner rebound vessel with its biodata. Use when the user wants to dramatically reject a vessel OR asks why a vessel is/was rejected, e.g. \"break up with <vessel>\", \"reject <vessel>\", \"why is this vessel rejected\", \"why was <vessel> rejected\", \"why is <vessel> not a match\", \"what's wrong with <vessel>\". The vessel may be named, given by IMO, or referred to contextually (\"this vessel\" / \"the vessel\") — in the contextual case use the IMO of the vessel discussed earlier in the conversation, and ask which vessel if none has been established (never guess an IMO). ALWAYS pass a real reboundImo (a cleaner, better-CII fleet vessel): the closure scene's 'Meet' button reveals that rebound's flip card + biodata, so without reboundImo the rebound shows as a generic placeholder and 'Meet' has no card to display. Pass the result STRAIGHT to show_vessel_breakup.",
         parameters: [
           { name: "imo", in: "query", required: true, description: "IMO of the vessel being broken up with (the 'ex').", schema: { type: "integer", minimum: 1000000, maximum: 9999999 } },
           { name: "keeperImo", in: "query", required: false, description: "Optional IMO of the keeper vessel writing the letter.", schema: { type: "integer", minimum: 1000000, maximum: 9999999 } },
@@ -378,6 +321,169 @@ const spec = {
         },
       },
     },
+    "/get_vessel_divorce": {
+      get: {
+        operationId: "get_vessel_divorce",
+        summary: "Regulatory documents (IMO DCS / EU-UK MRV / THETIS) — the 'divorce papers'",
+        description:
+          "The regulatory-DOCUMENT hub for a single vessel, themed as a 'Decree of Dissolution of Charter' (the formal escalation of the break-up). Returns the vessel's downloadable official emissions papers — IMO DCS Statement of Compliance, EU/UK MRV vessel-level report, EU MRV voyage report, and the THETIS-MRV verified copy — plus the grounds and the CO₂ / EU ETS settlement. Use this whenever the user asks about a vessel's IMO DCS, EU MRV / UK MRV reports, THETIS-MRV, or wants to download / export its emissions documents or paperwork — e.g. \"IMO DCS report\", \"the MRV report for <vessel>\", \"download the emissions documents\", \"THETIS report\", \"export the report\". Also use it for the divorce framing: \"divorce <vessel>\", \"file for divorce\", \"make it official\". The vessel may be named, given by IMO, or referred to contextually (\"this vessel\" / \"the vessel\") — use the IMO discussed earlier in the conversation, and ask which vessel if none has been established (never guess an IMO). Single vessel only; pass `counterpartyImo` ONLY when the user frames it as a divorce from a specific keeper. NOTE the boundaries: for plain CII / EU ETS / FuelEU figures use get_vessel_emissions; for FuelEU compliance balance / pooling use get_vessel_dowry — this tool is specifically for the regulatory documents and their download. Always 200; `dataSource` is 'live' or 'fixture' (say 'demo fixture data' and quote `message` when 'fixture'). Pass the result STRAIGHT to show_vessel_divorce — do NOT reshape; the documents carry verbatim source payloads for the client-side download.",
+        parameters: [
+          { name: "imo", in: "query", required: true, description: "IMO of the vessel whose regulatory documents to file (the focal vessel).", schema: { type: "integer", minimum: 1000000, maximum: 9999999 } },
+          { name: "counterpartyImo", in: "query", required: false, description: "Optional IMO of the keeper/petitioner vessel — only when the user frames this as a divorce from a specific vessel.", schema: { type: "integer", minimum: 1000000, maximum: 9999999 } },
+          { name: "vesselName", in: "query", required: false, description: "Optional display name for the focal vessel.", schema: { type: "string" } },
+          { name: "counterpartyName", in: "query", required: false, description: "Optional display name for the counterparty vessel.", schema: { type: "string" } },
+          yearParam,
+        ],
+        responses: {
+          "200": {
+            description: "vessel_divorce widget payload (decree + downloadable regulatory papers).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselDivorce" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_welcome": {
+      get: {
+        operationId: "get_vessel_welcome",
+        summary: "ZN Tinder welcome / greeting card",
+        description:
+          "Fetch the ZN Tinder welcome DATA: fleet stats aggregated from real emission-analytics data (total CO₂eq and EU ETS across the fleet, vessel count), today's most-eligible vessel (best CII grade), a fleet-drama meter, and the suggestion chips. Use this as the FIRST step whenever the user greets the assistant or asks how to get started — e.g. \"hi\", \"hey\", \"hello\", \"ahoy\", \"good morning\", \"what can you do\", \"get started\". First call vessel_get_fleet_vessels and pass the fleet's IMOs as `imos` so the stats reflect the real fleet; if you have no IMOs the tool falls back to demo fixture vessels. Then call `present_welcome`, passing this result STRAIGHT as its argument, to render the interactive card. Always 200; `dataSource` is 'live' only when every vessel returned live data, otherwise 'fixture' (say 'demo fixture data' and quote `message`).",
+        parameters: [
+          {
+            name: "imos",
+            in: "query",
+            required: false,
+            description:
+              "Comma-separated list of fleet IMO numbers (7-digit) to aggregate, e.g. '9710022,9920760'. Get these from vessel_get_fleet_vessels; never guess. If omitted, the card falls back to demo fixture vessels.",
+            schema: { type: "string" },
+          },
+          namesParam,
+          yearParam,
+          {
+            name: "operatorName",
+            in: "query",
+            required: false,
+            description: "Optional operator first name for the 'Ahoy, <name>' greeting. Omit if unknown.",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Welcome data — pass it straight as the argument to present_welcome.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselWelcome" } } },
+          },
+        },
+      },
+    },
+    "/present_welcome": {
+      post: {
+        operationId: "present_welcome",
+        summary: "Render the interactive ZN Tinder welcome card",
+        "x-zap-approval-widget": "vessel_welcome",
+        description:
+          "Render the interactive ZN Tinder welcome card and let the user pick an action. Call this RIGHT AFTER get_vessel_welcome, passing that tool's result STRAIGHT as the argument (the welcome data is the widget's input). The card renders with clickable chips; when the user clicks one, this returns { prompt, nextTool, renderTool }. You MUST immediately act on the result: call the tool named in `nextTool` (pass any IMO(s) embedded in `prompt`), then pass its result STRAIGHT to the tool named in `renderTool` to show the widget. Do NOT stop after this call and do NOT ask the user what to do next — the chip click IS the user's instruction. If `nextTool` is null, fall back to routing `prompt` yourself; if the user cancelled, just continue.",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/VesselWelcomeAction" } } },
+        },
+        responses: {
+          "200": {
+            description:
+              "The clicked chip resolved to its next tool. Call `nextTool`, then `renderTool` with its result.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/WelcomeRoute" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_traffic_signal": {
+      get: {
+        operationId: "get_vessel_traffic_signal",
+        summary: "Vessel Tinder traffic-signal swipe deck (ranked match candidates)",
+        description:
+          "A Tinder-style traffic-signal swipe deck of emissions-rated match candidates, ranked best-first. Each candidate card carries a green/amber/red charter signal and its key specs (CII, type, age, DWT, fuel), all derived from the vessel's REAL emission-analytics figures. Use when the user wants to swipe through vessel matches, find a vessel to pair / charter / pool with, or screen the fleet by emissions — e.g. \"swipe the card\", \"swipe through vessel matches\", \"find me a match\", \"who should I pair with\". First call vessel_get_fleet_vessels and pass the candidate IMOs as `imos`; if omitted the deck falls back to demo fixture vessels. Pass the result STRAIGHT to show_vessel_traffic_signal — do NOT reshape.",
+        parameters: [
+          {
+            name: "anchorName",
+            in: "query",
+            required: false,
+            description:
+              "What the deck is for — a vessel name, IMO, or cargo description (e.g. 'MV Nordic Aurora' or 'a Rotterdam→Singapore charter'). Shown as the deck header.",
+            schema: { type: "string" },
+          },
+          {
+            name: "imos",
+            in: "query",
+            required: false,
+            description:
+              "Comma-separated candidate IMO numbers (7-digit) to rank, e.g. '9710022,9920760'. Get these from vessel_get_fleet_vessels; never guess. If omitted, the deck falls back to demo fixture vessels.",
+            schema: { type: "string" },
+          },
+          namesParam,
+          yearParam,
+        ],
+        responses: {
+          "200": {
+            description: "vessel_traffic_signal widget payload (ranked candidate cards).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselTrafficSignal" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_tinder_voyage": {
+      get: {
+        operationId: "get_vessel_tinder_voyage",
+        summary: "Vessel Tinder voyage match deck",
+        description:
+          "A playful 'voyage match' swipe deck built from the REAL voyage-overview dashboard: each candidate's route (departure → arrival ports), CII grade, and EU-port activity (the share of its voyage legs that are EU-MRV eligible) come from live voyage data. Use when the user wants a 'voyage match', to find a voyage buddy, or to match vessels by shared route / EU-port activity — e.g. \"voyage match\", \"find a voyage match\", \"who's sailing my route\". Optionally pass `imo` to anchor the deck on the user's own vessel (it becomes the `base`); otherwise the first voyage is the anchor. Pass the result STRAIGHT to show_vessel_tinder_voyage — do NOT reshape. Always 200; falls back to a demo deck when the live voyage API is unavailable (flag it as demo data). Note: `flag` is omitted (no upstream source).",
+        parameters: [
+          {
+            name: "imo",
+            in: "query",
+            required: false,
+            description:
+              "Optional IMO of the user's own vessel to anchor the deck on (becomes the `base`). Get it from vessel_get_fleet_vessels; never guess. If omitted, the first voyage in the overview is the anchor.",
+            schema: { type: "integer", minimum: 1000000, maximum: 9999999 },
+          },
+          yearParam,
+        ],
+        responses: {
+          "200": {
+            description: "vessel_tinder_voyage widget payload (base vessel + candidate deck).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselTinderVoyage" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_dowry": {
+      get: {
+        operationId: "get_vessel_dowry",
+        summary: "Real FuelEU compliance balances (for the FuelEU 'dowry' card)",
+        description:
+          "Real FuelEU Maritime compliance balances for one or more vessels by IMO, from /vessel-fuel-eu-details — each vessel's compliance balance in tonnes CO₂eq (positive = surplus, negative = deficit), penalty cost in EUR, and a balance `band` (surplus / breakeven / deficit). This is the DEFAULT card for any FuelEU or EU-regulatory question about a vessel or fleet — call it whenever the user asks about FuelEU, a FuelEU 'dowry', pooling balances, what each vessel brings to a FuelEU pool, EU ports / EU port calls, EU voyages, EU compliance, EU regulations, or 'EU-related' standing in general. The vessel(s) may be named, given by IMO, or referred to contextually ('this vessel' / 'the fleet') — resolve to the IMO(s) discussed earlier in the conversation, and ask which vessel if none has been established (never guess an IMO). For a pure EU ETS carbon-cost figure only, use get_vessel_emissions instead. UNLIKE the other vessel widgets, this tool returns NUMBERS ONLY — it does not write any copy. After calling it, YOU compose the playful `vessel_fueleu_dowry` payload: keep the real `balanceT` per vessel, then write a witty matrimonial `quip` and itemised dowry lines from each real balance (surplus → 'brings a fat dowry'; deficit → 'marrying for love, are we?'), and pass that to show_vessel_fueleu_dowry. Never invent or alter the balance numbers. Always 200; `dataSource` is 'live' from emission-analytics or 'fixture' for the demo fallback (say 'demo fixture data' when 'fixture').",
+        parameters: [imosParam, namesParam, yearParam],
+        responses: {
+          "200": {
+            description: "Real FuelEU balances per vessel — the agent composes the dowry widget from these.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselDowryFacts" } } },
+          },
+        },
+      },
+    },
+    "/get_vessel_ghosted": {
+      get: {
+        operationId: "get_vessel_ghosted",
+        summary: "Vessels that have stopped sending noon reports ('ghosted')",
+        description:
+          "Real reporting-silence status for one or more vessels by IMO: how many days since each last sent a noon report, sourced from the data-lake (`/canonical/latest-noon-report-pd`). Use whenever the user asks which vessels have gone quiet / stopped reporting / 'ghosted' them, or about noon-report gaps, reporting health, or stale/overdue reports. The vessel(s) may be named, given by IMO, or referred to contextually ('the fleet') — resolve to real IMOs from the fleet (vessel_get_fleet_vessels); never guess one. Each row is severity-coded by days of silence (recent → cooling → ghosted → data gap); a vessel with no report on file renders as the most severe 'data gap' row. Missing noon reports create CII data holes, so this surfaces a real compliance risk behind the playful framing. Pass the result STRAIGHT to show_vessel_ghosted — do NOT reshape. Always 200; rows with no live report fall back to demo fixture data (noted in the footnote).",
+        parameters: [imosParam, namesParam],
+        responses: {
+          "200": {
+            description: "vessel_ghosted widget payload (per-vessel days of noon-report silence).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VesselGhosted" } } },
+          },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -388,119 +494,89 @@ const spec = {
       // Generated from the vessel-tinder widget Zod schemas (see `toOpenApi` above) —
       // each is the exact input the matching show_vessel_* render tool expects.
       VesselBiodata: vesselBiodataResult,
+      // The flip card carries the biodata payload PLUS an optional raw /year-to-date-cii
+      // passthrough (`ytdCiiRaw`) for its download — generated from its own schema.
+      VesselFlipCard: vesselFlipCardResult,
       VesselRoast: vesselRoastResult,
-      VesselTrafficSignal: vesselTrafficSignalResult,
       VesselLoveMeter: vesselLoveMeterResult,
-      VesselTinderMatch: vesselMatchResult,
       VesselBreakup: vesselBreakupResult,
+      VesselDivorce: vesselDivorceResult,
+      VesselNoonReport: vesselNoonReportResult,
       VesselPoolingMeter: vesselPoolingResult,
-      NoonReportSummary: {
+      VesselWelcome: vesselWelcomeResult,
+      VesselWelcomeAction: welcomeActionResult,
+      // Hand-authored: what /present_welcome returns after a chip click. The server
+      // resolves the clicked prompt to the exact next tool so the agent does not
+      // have to interpret a routing table — it just calls `nextTool` then `renderTool`.
+      WelcomeRoute: {
         type: "object",
-        required: ["imo", "datetimeGmt"],
+        required: ["prompt", "nextTool", "renderTool"],
         properties: {
-          imo: { type: "integer", description: "IMO number." },
-          voyageNr: { type: "string", nullable: true, description: "Voyage number string." },
-          reportType: {
+          prompt: {
+            type: "string",
+            description: "The chat phrase for the chip the user clicked (may embed a vessel name/IMO).",
+          },
+          nextTool: {
             type: "string",
             nullable: true,
-            description: "Report type — e.g. 'noon_at_sea', 'arrival', 'departure', 'at_anchor'.",
+            description:
+              "The exact data tool to call next, e.g. 'emissions_get_vessel_traffic_signal'. Pass any IMO(s) found in `prompt`. Null when the prompt did not match a known chip — route it yourself then.",
           },
-          datetimeGmt: {
+          renderTool: {
             type: "string",
-            format: "date-time",
-            description: "Report timestamp in GMT (ISO 8601). Treat as authoritative.",
-          },
-          position: {
-            type: "object",
             nullable: true,
-            description: "Vessel position at noon.",
-            properties: {
-              latitude: { type: "number", nullable: true, description: "Decimal degrees." },
-              longitude: { type: "number", nullable: true, description: "Decimal degrees." },
-              courseOverGround: {
-                type: "number",
-                nullable: true,
-                description: "Course over ground in degrees (0–360).",
-              },
-              speedOverGround: {
-                type: "number",
-                nullable: true,
-                description: "Speed over ground in knots.",
-              },
-              distanceRun24h: {
-                type: "number",
-                nullable: true,
-                description: "Distance run in the last 24 hours (nautical miles).",
-              },
-            },
+            description:
+              "The show_* render tool to pass `nextTool`'s result to, e.g. 'show_vessel_traffic_signal'. Null when `nextTool` is null.",
           },
-          weatherObserved: {
-            type: "object",
-            nullable: true,
-            description: "Conditions reported by the captain at the time of the report.",
-            properties: {
-              windSpeedKn: { type: "number", nullable: true, description: "Wind speed in knots." },
-              windDirectionDeg: {
-                type: "number",
-                nullable: true,
-                description: "Wind direction in degrees (where the wind is FROM).",
-              },
-              waveHeightM: { type: "number", nullable: true, description: "Wave height in metres." },
-              swellHeightM: { type: "number", nullable: true, description: "Swell wave height in metres." },
-              beaufort: {
-                type: "integer",
-                nullable: true,
-                description: "Beaufort wind force scale (0–12).",
-              },
-            },
-          },
-          bunkers: {
-            type: "array",
-            description: "Remaining-on-board per fuel grade (tonnes).",
-            items: {
-              type: "object",
-              properties: {
-                fuelGrade: {
-                  type: "string",
-                  nullable: true,
-                  description: "Fuel grade name (e.g. 'VLSFO', 'MGO', 'HFO').",
-                },
-                robTonnes: { type: "number", nullable: true, description: "Tonnes remaining on board." },
-              },
-            },
-          },
-          consumption24h: {
-            type: "array",
-            description: "Fuel consumed in the last 24 h per grade (tonnes).",
-            items: {
-              type: "object",
-              properties: {
-                fuelGrade: { type: "string", nullable: true, description: "Fuel grade name." },
-                consumedTonnes: {
-                  type: "number",
-                  nullable: true,
-                  description: "Tonnes consumed in the last 24 hours.",
-                },
-              },
-            },
-          },
-          originPort: { $ref: "#/components/schemas/PortRef" },
-          destinationPort: { $ref: "#/components/schemas/PortRef" },
         },
       },
-      PortRef: {
+      VesselTrafficSignal: vesselTrafficSignalResult,
+      VesselTinderVoyage: vesselTinderVoyageResult,
+      VesselGhosted: vesselGhostedResult,
+      // Hand-authored: get_vessel_dowry returns REAL FuelEU numbers only (no widget
+      // shape) — the agent composes the vessel_fueleu_dowry payload from these.
+      VesselDowryFacts: {
         type: "object",
-        nullable: true,
-        description: "A port reference (UN/LOCODE + name).",
+        required: ["scheme", "year", "vessels"],
         properties: {
-          unlocode: {
-            type: "string",
-            nullable: true,
-            description: "UN/LOCODE — 5-character port code (e.g. 'NLRTM' for Rotterdam).",
+          scheme: { type: "string", description: "Compliance scheme name — always 'FuelEU Maritime'." },
+          year: { type: "integer", description: "Compliance year the balances are for." },
+          vessels: {
+            type: "array",
+            description: "One entry per requested vessel, in the order the IMOs were supplied.",
+            items: {
+              type: "object",
+              required: ["imo", "name", "balanceT", "penaltyEur", "band", "dataSource"],
+              properties: {
+                imo: { type: "integer", description: "Vessel IMO number." },
+                name: { type: "string", description: "Display name (falls back to 'IMO <n>' when unknown)." },
+                balanceT: {
+                  type: "number",
+                  nullable: true,
+                  description:
+                    "Real FuelEU compliance balance in tonnes CO₂eq (positive = surplus, negative = deficit). Null when no FuelEU data is on file — do not fabricate. Use this verbatim as the dowry card's balanceT.",
+                },
+                penaltyEur: {
+                  type: "number",
+                  nullable: true,
+                  description: "Real FuelEU penalty cost in EUR. Null when unavailable.",
+                },
+                band: {
+                  type: "string",
+                  nullable: true,
+                  enum: ["surplus", "breakeven", "deficit"],
+                  description:
+                    "Balance band derived from balanceT (>0 surplus, ≥-50 break-even, else deficit). Null when balanceT is null. Pick the matrimonial tone from this so it matches the rendered signal colour.",
+                },
+                dataSource: {
+                  type: "string",
+                  enum: ["live", "fixture"],
+                  description:
+                    "'live' = real emission-analytics figures. 'fixture' = demo fallback (RBAC-denied or no data); say 'demo fixture data' when this is 'fixture'.",
+                },
+              },
+            },
           },
-          name: { type: "string", nullable: true, description: "Human-readable port name." },
-          latitude: { type: "number", nullable: true, description: "Decimal degrees, if known." },
-          longitude: { type: "number", nullable: true, description: "Decimal degrees, if known." },
         },
       },
     },
