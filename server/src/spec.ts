@@ -404,7 +404,7 @@ const spec = {
         operationId: "get_vessel_traffic_signal",
         summary: "Vessel Tinder traffic-signal swipe deck (ranked match candidates)",
         description:
-          "A Tinder-style traffic-signal swipe deck of emissions-rated match candidates, ranked best-first. Each candidate card carries a green/amber/red charter signal and its key specs (CII, type, age, DWT, fuel), all derived from the vessel's REAL emission-analytics figures. Use when the user wants to swipe through vessel matches, find a vessel to pair / charter / pool with, or screen the fleet by emissions — e.g. \"swipe the card\", \"swipe through vessel matches\", \"find me a match\", \"who should I pair with\". First call vessel_get_fleet_vessels and pass the candidate IMOs as `imos`; if omitted the deck falls back to demo fixture vessels. Pass the result STRAIGHT to show_vessel_traffic_signal — do NOT reshape.",
+          "A Tinder-style traffic-signal swipe deck of emissions-rated match candidates, ranked best-first. Each candidate card carries a green/amber/red charter signal and its key specs (CII, type, age, DWT, fuel), all derived from the vessel's REAL emission-analytics figures. THIS is the tool for 'find a match for ONE named vessel' — 'find/fine a match for <vessel>', 'match for <vessel>', 'good match for <vessel>', 'who should <vessel> pair with', 'swipe through vessel matches', 'find me a match', 'who should I pair / charter / pool with'. Set `anchorName` to the named vessel itself (the vessel you are matching FOR — it is the anchor, NOT a candidate); put the OTHER fleet vessels in `imos` as candidates. Do NOT use get_vessel_crossing for a single-vessel match, and never make a candidate the reference. First call vessel_get_fleet_vessels for the candidate IMOs; if omitted the deck falls back to demo fixture vessels. Pass the result STRAIGHT to show_vessel_traffic_signal — do NOT reshape.",
         parameters: [
           {
             name: "anchorName",
@@ -493,7 +493,7 @@ const spec = {
         operationId: "get_vessel_crossing",
         summary: "Side-by-side comparison of up to 4 vessels",
         description:
-          "Compare up to 4 vessels' real specs and CII side by side, scored against the FIRST vessel (the reference). Use when the user names two or more specific vessels to compare ('compare X and Y'). Pass `imos` with the reference IMO FIRST, optional aligned `names`. Get IMOs from vessel_get_fleet_vessels; never guess. Pass the result STRAIGHT to show_vessel_crossing.",
+          "Compare up to 4 vessels' real specs and CII side by side, scored against the FIRST vessel (the reference). ONLY use this when the user names TWO OR MORE specific vessels to compare ('compare X and Y', 'X vs Y'). Pass `imos` with the user's primary vessel FIRST so it is the reference, optional aligned `names`. For 'find a match for <one vessel>' do NOT use this — use get_vessel_traffic_signal anchored on that vessel instead (never put a candidate as the reference here). Get IMOs from vessel_get_fleet_vessels; never guess. Pass the result STRAIGHT to show_vessel_crossing.",
         parameters: [imosParam, namesParam, yearParam],
         responses: {
           "200": {
