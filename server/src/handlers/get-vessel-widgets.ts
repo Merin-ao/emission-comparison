@@ -26,9 +26,13 @@ import {
   projectTinderVoyage,
   projectDowry,
   projectGhosted,
+  projectCrossing,
+  projectNearby,
+  projectAwards,
   type DivorceDocSources,
   type GhostRow,
   type VesselGhostedData,
+  type NearbyRow,
 } from "../vessel-projections.ts";
 
 /** A vessel reference from the agent: IMO plus an optional display name. */
@@ -236,6 +240,45 @@ const handleGetVesselGhosted = async (
   return projectGhosted(rows);
 };
 
+// "Crossing" side-by-side compare: gather each vessel's real facts and project to
+// the compare card. The FIRST ref is the reference the others are scored against,
+// so the caller must pass the reference IMO first.
+const handleGetVesselCrossing = async (refs: VesselRef[], year: number, auth: string | undefined) =>
+  projectCrossing(await factsForMany(refs, year, auth));
+
+// "Awards" / hall of fame: returns compact real figures per vessel. The agent
+// ranks them, invents the award titles + citations, and composes the
+// vessel_awards payload itself (see zap/knowledge/emissions.md).
+const handleGetVesselAwards = async (refs: VesselRef[], year: number, auth: string | undefined) =>
+  projectAwards(await factsForMany(refs, year, auth));
+
+// "Nearby" radar: for each vessel gather facts (CII/type) + its latest noon-report
+// position (lat/lon) from the data-lake. Vessels with no position are dropped
+// (can't be plotted). The reference vessel is the scope centre.
+const nearbyRowFor = async (ref: VesselRef, year: number, auth: string | undefined): Promise<NearbyRow | null> => {
+  const [facts, report] = await Promise.all([
+    factsFor(ref, year, auth),
+    getLatestNoonReport(ref.imo, auth).catch(() => null),
+  ]);
+  const nav = report?.navigational_data;
+  const lat = nav?.latitude;
+  const lon = nav?.longitude;
+  if (typeof lat !== "number" || typeof lon !== "number") {
+    return null; // no position → can't plot
+  }
+  return { name: facts.vesselName ?? ref.name ?? `IMO ${ref.imo}`, lat, lon, cii: facts.ciiRating, type: facts.type };
+};
+
+const handleGetVesselNearby = async (
+  referenceName: string,
+  refs: VesselRef[],
+  year: number,
+  auth: string | undefined,
+) => {
+  const rows = (await Promise.all(refs.map((r) => nearbyRowFor(r, year, auth)))).filter((r): r is NearbyRow => r !== null);
+  return projectNearby(referenceName, rows);
+};
+
 export {
   handleGetVesselBiodata,
   handleGetVesselFlipCard,
@@ -249,5 +292,8 @@ export {
   handleGetVesselTinderVoyage,
   handleGetVesselDowry,
   handleGetVesselGhosted,
+  handleGetVesselCrossing,
+  handleGetVesselAwards,
+  handleGetVesselNearby,
 };
 export type { VesselRef };

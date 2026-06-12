@@ -17,6 +17,9 @@ import {
   handleGetVesselTinderVoyage,
   handleGetVesselDowry,
   handleGetVesselGhosted,
+  handleGetVesselCrossing,
+  handleGetVesselAwards,
+  handleGetVesselNearby,
   type VesselRef,
 } from "./handlers/get-vessel-widgets.ts";
 import { spec } from "./spec.ts";
@@ -364,6 +367,60 @@ app.get<{ Querystring: { anchorName?: string; imos?: string; names?: string; yea
     app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_traffic_signal");
     try {
       return await handleGetVesselTrafficSignal(anchorName, refs, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+// Crossing — side-by-side compare of up to 4 vessels. The FIRST imo is the
+// reference the others are scored against.
+app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
+  "/get_vessel_crossing",
+  async (req, reply) => {
+    const refs = parseRefs(req.query.imos, req.query.names);
+    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated; first = reference)" });
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_crossing");
+    try {
+      return await handleGetVesselCrossing(refs, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+// Awards / hall of fame — real per-vessel figures; the agent composes the awards.
+app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
+  "/get_vessel_awards",
+  async (req, reply) => {
+    const refs = parseRefs(req.query.imos, req.query.names);
+    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_awards");
+    try {
+      return await handleGetVesselAwards(refs, year, auth);
+    } catch (err) {
+      return mapError(reply, err);
+    }
+  },
+);
+
+// Nearby radar — each vessel's latest AIS position (data-lake noon report) + CII.
+// `anchorName` is the scope centre vessel's name.
+app.get<{ Querystring: { imos?: string; names?: string; year?: string; anchorName?: string } }>(
+  "/get_vessel_nearby",
+  async (req, reply) => {
+    const refs = parseRefs(req.query.imos, req.query.names);
+    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
+    const anchorName = req.query.anchorName?.trim() || refs[0]?.name || "reference vessel";
+    const year = parseYear(req.query.year);
+    const auth = authOf(req.headers);
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_nearby");
+    try {
+      return await handleGetVesselNearby(anchorName, refs, year, auth);
     } catch (err) {
       return mapError(reply, err);
     }

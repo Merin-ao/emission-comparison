@@ -27,6 +27,8 @@ import {
   trafficSignalDataSchema,
   vesselTinderDataSchema,
   ghosted,
+  crossing,
+  nearby,
 } from "../../zap-widgets/src/vessel-match/schema/index.ts";
 
 /**
@@ -100,6 +102,8 @@ const vesselTinderVoyageResult = toOpenApi(vesselTinderDataSchema);
 // The `ghosted` catalog widget doesn't export a named data schema — read it off
 // the widget definition's `.input` so the response stays in lockstep with it.
 const vesselGhostedResult = toOpenApi(ghosted.input);
+const vesselCrossingResult = toOpenApi(crossing.input);
+const vesselNearbyResult = toOpenApi(nearby.input);
 
 // Shared query parameters for the vessel-tinder tools.
 const imoParam = {
@@ -576,6 +580,79 @@ const spec = {
                 },
               },
             },
+          },
+        },
+      },
+    },
+    "/get_vessel_crossing": {
+      get: {
+        operationId: "get_vessel_crossing",
+        summary: "Side-by-side comparison of up to 4 vessels",
+        description:
+          "Compare up to 4 vessels' real specs and CII side by side, scored against the FIRST vessel (the reference). Use when the user names two or more specific vessels to compare ('compare X and Y'). Pass `imos` with the reference IMO FIRST, optional aligned `names`. Get IMOs from vessel_get_fleet_vessels; never guess. Pass the result STRAIGHT to show_vessel_crossing.",
+        parameters: [imosParam, namesParam, yearParam],
+        responses: {
+          "200": {
+            description: "Crossing compare payload (vessels[], first = reference)",
+            content: { "application/json": { schema: vesselCrossingResult } },
+          },
+        },
+      },
+    },
+    "/get_vessel_awards": {
+      get: {
+        operationId: "get_vessel_awards",
+        summary: "Real per-vessel figures for the fleet awards (you assign the awards)",
+        description:
+          "Returns compact REAL figures (CII, EU ETS cost, FuelEU balance & penalty, CO₂eq, fuel, type, DWT) for the given vessels. YOU then rank them, invent fitting award titles and a one-line citation each, split them into good/watch, and compose the show_vessel_awards payload — the figures are the evidence, the judgement is yours (never fabricate numbers). Use for 'give out the fleet awards', 'hall of fame', 'best & worst and why'. Get `imos` from vessel_get_fleet_vessels.",
+        parameters: [imosParam, namesParam, yearParam],
+        responses: {
+          "200": {
+            description: "Per-vessel award evidence (you compose the awards from this)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    year: { type: "integer" },
+                    vessels: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        description:
+                          "Real figures for one vessel: imo, name, cii (A–E or null), etsCostEur, fuelEuBalanceT, fuelEuPenaltyEur, co2eqT, mainFuel, type, dwt, dataSource ('live'|'fixture').",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/get_vessel_nearby": {
+      get: {
+        operationId: "get_vessel_nearby",
+        summary: "Live positions of vessels for the radar scope",
+        description:
+          "Returns each vessel's latest AIS position (lat/lon from the data-lake noon report) plus CII and type, for the radar / 'what is near X'. `anchorName` is the scope-centre vessel's name; include its IMO in `imos` along with the others. Vessels with no position on file are dropped (can't be plotted). Get IMOs from vessel_get_fleet_vessels. Pass the result STRAIGHT to show_vessel_nearby.",
+        parameters: [
+          imosParam,
+          namesParam,
+          {
+            name: "anchorName",
+            in: "query",
+            required: false,
+            description: "Name of the centre vessel the radar is scoped around.",
+            schema: { type: "string" },
+          },
+          yearParam,
+        ],
+        responses: {
+          "200": {
+            description: "Radar payload (reference + vessels[] with lat/lon)",
+            content: { "application/json": { schema: vesselNearbyResult } },
           },
         },
       },
