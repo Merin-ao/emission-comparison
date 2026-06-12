@@ -94,6 +94,14 @@ const parseYear = (raw: string | undefined): number => {
   return Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : 2026;
 };
 
+// Radar scope radius in nm. Defaults to 50; clamped to a sane 1..5000 band so a
+// junk value can't blow up the widget's ring math.
+const parseRange = (raw: string | undefined): number => {
+  const n = raw ? Number(raw) : 50;
+  if (!Number.isFinite(n)) return 50;
+  return Math.min(5000, Math.max(1, n));
+};
+
 /** Parse comma-separated `imos` + optional aligned `names` into vessel refs,
  *  dropping any invalid IMO. */
 const parseRefs = (imos: string | undefined, names: string | undefined): VesselRef[] => {
@@ -410,17 +418,19 @@ app.get<{ Querystring: { imos?: string; names?: string; year?: string } }>(
 
 // Nearby radar — each vessel's latest AIS position (data-lake noon report) + CII.
 // `anchorName` is the scope centre vessel's name.
-app.get<{ Querystring: { imos?: string; names?: string; year?: string; anchorName?: string } }>(
+app.get<{ Querystring: { imos?: string; names?: string; year?: string; anchorName?: string; rangeNm?: string } }>(
   "/get_vessel_nearby",
   async (req, reply) => {
+    // imos is OPTIONAL — when omitted the handler falls back to the demo fleet, so
+    // the agent can call this tool alone without a prior fleet-list lookup.
     const refs = parseRefs(req.query.imos, req.query.names);
-    if (refs.length === 0) return reply.code(400).send({ error: "`imos` is required (comma-separated 7-digit IMOs)" });
     const anchorName = req.query.anchorName?.trim() || refs[0]?.name || "reference vessel";
     const year = parseYear(req.query.year);
+    const rangeNm = parseRange(req.query.rangeNm);
     const auth = authOf(req.headers);
-    app.log.info({ tenant: tenantOf(auth), count: refs.length, year }, "get_vessel_nearby");
+    app.log.info({ tenant: tenantOf(auth), count: refs.length, year, rangeNm }, "get_vessel_nearby");
     try {
-      return await handleGetVesselNearby(anchorName, refs, year, auth);
+      return await handleGetVesselNearby(anchorName, refs, year, auth, rangeNm);
     } catch (err) {
       return mapError(reply, err);
     }

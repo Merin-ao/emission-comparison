@@ -8,12 +8,15 @@
  * The base URL is tenant-scoped (e.g. https://trafigura.stage.zeronorth.app/fleet-map),
  * so override it per tenant via FLEET_MAP_BASE_URL.
  *
- * NOTE: the exact response JSON shape had not been observed when this was written,
- * so `parseLatestPositions` extracts lat/lon defensively across the plausible
- * shapes — a top-level array, `{ data|positions|vessels|results: [...] }`, or an
- * imo-keyed map; with `latitude|lat`, `longitude|lon|lng`, a nested `position`/
- * `location` object, or GeoJSON `coordinates: [lon, lat]`. Once a real response is
- * captured, tighten this to the actual field names.
+ * Observed response shape (stage, 2026-06):
+ *   { "results": [
+ *       { "imo": 9100176,
+ *         "aisObservations": [
+ *           { "imo", "latitude", "longitude", "course", "speed", "mmsi",
+ *             "navigationalStatus", "destination", "eta", "draught", "timestamp" } ] } ] }
+ * The lat/lon are NESTED inside `aisObservations[0]`, keyed by the outer `results[].imo`.
+ * `parseLatestPositions` reads that shape first and keeps a defensive fallback for a
+ * flat array / other array keys / imo-keyed map with `latitude|lat` etc.
  */
 
 const FLEET_MAP_BASE_URL =
@@ -38,9 +41,13 @@ type AisPosition = { lat: number; lon: number };
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
 
-// Pull lat/lon out of one record across the plausible field namings.
+// Pull lat/lon out of one record across the plausible field namings, including the
+// observed `aisObservations[0]` nesting and a nested `position`/`location` object.
 const extractLatLon = (rec: Record<string, unknown>): AisPosition | null => {
+  // Real shape: the latest fix lives in aisObservations[0].
+  const obs = Array.isArray(rec.aisObservations) ? rec.aisObservations[0] : undefined;
   const pos = (
+    (typeof obs === "object" && obs) ||
     (typeof rec.position === "object" && rec.position) ||
     (typeof rec.location === "object" && rec.location) ||
     rec
@@ -66,10 +73,10 @@ const parseLatestPositions = (body: unknown): Map<number, AisPosition> => {
   const obj = body as Record<string, unknown>;
   const arr: unknown[] | null =
     (Array.isArray(body) && body) ||
+    (Array.isArray(obj.results) && obj.results) ||
     (Array.isArray(obj.data) && obj.data) ||
     (Array.isArray(obj.positions) && obj.positions) ||
     (Array.isArray(obj.vessels) && obj.vessels) ||
-    (Array.isArray(obj.results) && obj.results) ||
     null;
 
   if (arr) {

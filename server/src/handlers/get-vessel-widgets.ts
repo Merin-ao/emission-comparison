@@ -6,6 +6,7 @@
  * the expected upstream failures and falls back to the demo fixture.
  */
 
+import { dummyCentre, dummyOffset, type LatLon } from "../ais-fixtures.ts";
 import { getImoDcs, getEuMrvVoyage, getMrvVesselReport } from "../compliance-docs.ts";
 import { getComplianceFixture } from "../compliance-fixtures.ts";
 import { DataLakeError, getLatestNoonReport } from "../data-lake.ts";
@@ -253,57 +254,90 @@ const handleGetVesselCrossing = async (refs: VesselRef[], year: number, auth: st
 const handleGetVesselAwards = async (refs: VesselRef[], year: number, auth: string | undefined) =>
   projectAwards(await factsForMany(refs, year, auth));
 
-// "Nearby" radar: for each vessel gather facts (CII/type) + its latest position.
-// Position source, in order of preference: live fleet-map AIS (passed in,
-// batched once per fleet) → live data-lake noon report → demo noon-report
-// fixture. Vessels with no position anywhere are dropped (can't be plotted).
-// The reference vessel is the scope centre.
-const nearbyRowFor = async (
+// Match the anchor name to a ref tolerantly (case / "MV " prefix / whitespace),
+// mirroring the widget's own centre-matching so the same vessel becomes the centre.
+const normName = (s: string | null | undefined): string =>
+  (s ?? "").replace(/^mv\s+/i, "").trim().toLowerCase();
+
+// Resolve a vessel's REAL position, in order of preference: live fleet-map AIS
+// (passed in, batched once per fleet) → live data-lake noon report → demo
+// noon-report fixture. Returns null when none is available; the caller then fills
+// a deterministic dummy so the vessel still plots. NB: the fixture is the projected
+// NoonReportSummary shape (`position`), not the raw data-lake `navigational_data`.
+const realPositionFor = async (
   ref: VesselRef,
-  year: number,
   auth: string | undefined,
   aisPos: AisPosition | undefined,
-): Promise<NearbyRow | null> => {
-  // Only fetch the noon report as a backstop — when AIS already gave us a fix,
-  // skip the call entirely.
-  const [facts, report] = await Promise.all([
-    factsFor(ref, year, auth),
-    aisPos ? Promise.resolve(null) : getLatestNoonReport(ref.imo, auth).catch(() => null),
-  ]);
-  let lat: number | null | undefined = aisPos?.lat ?? report?.navigational_data?.latitude;
-  let lon: number | null | undefined = aisPos?.lon ?? report?.navigational_data?.longitude;
-  // Final offline fallback: the demo noon-report fixture (offline / RBAC-denied /
-  // no report on file), so the radar still plots end-to-end. NB: the fixture is
-  // the projected NoonReportSummary shape (`position`), not the raw data-lake
-  // shape (`navigational_data`).
-  if (typeof lat !== "number" || typeof lon !== "number") {
-    const fixture = getNoonReportFixture(ref.imo);
-    lat = fixture?.position?.latitude ?? undefined;
-    lon = fixture?.position?.longitude ?? undefined;
-  }
-  if (typeof lat !== "number" || typeof lon !== "number") {
-    return null; // no position anywhere → can't plot
-  }
-  return { name: facts.vesselName ?? ref.name ?? `IMO ${ref.imo}`, lat, lon, cii: facts.ciiRating, type: facts.type };
+): Promise<LatLon | null> => {
+  if (aisPos) return { lat: aisPos.lat, lon: aisPos.lon };
+  const report = await getLatestNoonReport(ref.imo, auth).catch(() => null);
+  const nlat = report?.navigational_data?.latitude;
+  const nlon = report?.navigational_data?.longitude;
+  if (typeof nlat === "number" && typeof nlon === "number") return { lat: nlat, lon: nlon };
+  const fx = getNoonReportFixture(ref.imo);
+  const flat = fx?.position?.latitude;
+  const flon = fx?.position?.longitude;
+  if (typeof flat === "number" && typeof flon === "number") return { lat: flat, lon: flon };
+  return null;
 };
 
+// "Nearby" radar: for each vessel gather facts (CII/type) + its latest position.
+// The ref matching `referenceName` (else the first ref) is the scope centre. Real
+// positions are used when available; any vessel without one gets a deterministic
+// dummy position clustered around the centre, so ANY asked vessel still plots and
+// the radar is never empty. `rangeNm` is the requested scope radius.
 const handleGetVesselNearby = async (
   referenceName: string,
   refs: VesselRef[],
   year: number,
   auth: string | undefined,
+  rangeNm: number,
 ) => {
+  // imos optional: when none are passed, plot the demo fleet around the named
+  // anchor so the tool can be called alone (no prior fleet-list lookup needed).
+  const effectiveRefs =
+    refs.length > 0 ? refs : emissionsFixtureImos().map((imo) => ({ imo, name: null }) as VesselRef);
   // One batched fleet-map AIS call for the whole fleet (the endpoint takes all
   // imos at once); soften any failure to an empty map so per-vessel fallbacks
-  // (noon report / fixture) still run.
+  // (noon report / fixture / dummy) still run.
   const positions = await getLatestAisPositions(
-    refs.map((r) => r.imo),
+    effectiveRefs.map((r) => r.imo),
     auth,
   ).catch(() => new Map<number, AisPosition>());
-  const rows = (
-    await Promise.all(refs.map((r) => nearbyRowFor(r, year, auth, positions.get(r.imo))))
-  ).filter((r): r is NearbyRow => r !== null);
-  return projectNearby(referenceName, rows);
+  // Facts + real position for every ref, in parallel.
+  const resolved = await Promise.all(
+    effectiveRefs.map(async (ref) => ({
+      ref,
+      facts: await factsFor(ref, year, auth),
+      pos: await realPositionFor(ref, auth, positions.get(ref.imo)),
+    })),
+  );
+  // Centre anchors every dummy fill, so resolve it first: real position when known,
+  // else a stable dummy base derived from its IMO.
+  const centre = resolved.find((r) => normName(r.ref.name) === normName(referenceName)) ?? resolved[0];
+  const centrePos: LatLon = centre?.pos ?? (centre ? dummyCentre(centre.ref.imo) : { lat: 0, lon: 0 });
+  // One row per ref — never dropped: real position when known, else a deterministic
+  // dummy offset around the centre (the centre itself falls back to centrePos).
+  const rows: NearbyRow[] = resolved.map(({ ref, facts, pos }) => {
+    const p = pos ?? (centre && ref.imo === centre.ref.imo ? centrePos : dummyOffset(centrePos, ref.imo));
+    return { name: facts.vesselName ?? ref.name ?? `IMO ${ref.imo}`, lat: p.lat, lon: p.lon, cii: facts.ciiRating, type: facts.type };
+  });
+  // The widget centres the radar on the row whose name matches `referenceName`. The
+  // agent often resolves the anchor's position via a separate tool and DOESN'T pass
+  // its IMO here, so no row carries that name → the widget shows "no AIS position".
+  // Guarantee a centre row: if none matches, synthesize one named `referenceName` at
+  // the centroid of the plotted vessels (else a stable dummy base) so it always plots.
+  const hasCentre = rows.some((r) => normName(r.name) === normName(referenceName));
+  if (!hasCentre && referenceName) {
+    const cen: LatLon = rows.length
+      ? {
+          lat: rows.reduce((s, r) => s + r.lat, 0) / rows.length,
+          lon: rows.reduce((s, r) => s + r.lon, 0) / rows.length,
+        }
+      : dummyCentre(referenceName.length * 100003 + referenceName.charCodeAt(0));
+    rows.unshift({ name: referenceName, lat: cen.lat, lon: cen.lon, cii: null, type: null });
+  }
+  return projectNearby(referenceName, rows, rangeNm);
 };
 
 export {
